@@ -1,7 +1,10 @@
 const { core, event, dialog } = window.__TAURI__;
+const { t } = window.I18N;
 
 const levelSelect = document.getElementById("level-select");
 const engineSelect = document.getElementById("engine-select");
+const engineOptionGs = document.getElementById("engine-option-gs");
+const engineOptionBest = document.getElementById("engine-option-best");
 const setDefaultCheckbox = document.getElementById("set-default");
 const compressBtn = document.getElementById("compress-btn");
 const clearBtn = document.getElementById("clear-btn");
@@ -11,12 +14,13 @@ const fileList = document.getElementById("file-list");
 const installBtn = document.getElementById("install-btn");
 const installStatus = document.getElementById("install-status");
 
-/** path -> { li, status, detail } */
+/** path -> { li, detail, render() } */
 const files = new Map();
+let gsAvailable = true;
 
 function humanSize(bytes) {
   if (bytes == null) return "";
-  const units = ["o", "Ko", "Mo", "Go"];
+  const units = window.I18N.sizeUnits();
   let size = bytes;
   let unit = 0;
   while (size >= 1024 && unit < units.length - 1) {
@@ -30,6 +34,33 @@ function fileName(path) {
   return path.split("/").pop() || path;
 }
 
+/** Renders a file's current status in the active language from its last known state. */
+function renderFileStatus(entry) {
+  entry.detail.innerHTML = "";
+  const s = entry.state;
+  if (s.kind === "pending") {
+    entry.detail.className = "file-detail";
+    entry.detail.textContent = t("file.pending");
+  } else if (s.kind === "compressing") {
+    entry.detail.className = "file-detail";
+    entry.detail.textContent = t("file.compressing");
+  } else if (s.kind === "compressed") {
+    entry.detail.className = "file-detail ok";
+    entry.detail.textContent = `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)}  (-${s.pct} %)  `;
+    const reveal = document.createElement("button");
+    reveal.className = "reveal-link";
+    reveal.textContent = t("file.reveal");
+    reveal.addEventListener("click", () => core.invoke("reveal_in_finder", { path: s.output }));
+    entry.detail.append(reveal);
+  } else if (s.kind === "not_smaller") {
+    entry.detail.className = "file-detail";
+    entry.detail.textContent = t("file.notSmaller");
+  } else if (s.kind === "error") {
+    entry.detail.className = "file-detail err";
+    entry.detail.textContent = s.message || t("file.failed");
+  }
+}
+
 function addFiles(paths) {
   for (const path of paths) {
     if (files.has(path) || !path.toLowerCase().endsWith(".pdf")) continue;
@@ -40,11 +71,12 @@ function addFiles(paths) {
     name.textContent = fileName(path);
     const detail = document.createElement("div");
     detail.className = "file-detail";
-    detail.textContent = "en attente";
     li.append(name, detail);
     fileList.append(li);
 
-    files.set(path, { li, detail });
+    const entry = { li, detail, state: { kind: "pending" } };
+    files.set(path, entry);
+    renderFileStatus(entry);
   }
   compressBtn.disabled = files.size === 0;
 }
@@ -55,17 +87,18 @@ function clearFiles() {
   compressBtn.disabled = true;
 }
 
+function updateEngineOptionLabels() {
+  engineOptionGs.textContent = gsAvailable ? t("engine.gs") : t("engine.gsUnavailable");
+  engineOptionGs.disabled = !gsAvailable;
+  engineOptionBest.textContent = gsAvailable ? t("engine.best") : t("engine.bestGsUnavailable");
+}
+
 async function loadConfig() {
   const cfg = await core.invoke("get_config");
   levelSelect.value = cfg.level;
   engineSelect.value = cfg.engine;
-  const gsOption = engineSelect.querySelector('option[value="gs"]');
-  const bestOption = engineSelect.querySelector('option[value="best"]');
-  if (!cfg.gs_available) {
-    gsOption.disabled = true;
-    gsOption.textContent = "Ghostscript (non installé)";
-    bestOption.textContent = "Meilleur des deux (Ghostscript indisponible)";
-  }
+  gsAvailable = cfg.gs_available;
+  updateEngineOptionLabels();
 }
 
 async function onLevelOrEngineChange() {
@@ -81,6 +114,15 @@ async function onLevelOrEngineChange() {
 levelSelect.addEventListener("change", onLevelOrEngineChange);
 engineSelect.addEventListener("change", onLevelOrEngineChange);
 setDefaultCheckbox.addEventListener("change", onLevelOrEngineChange);
+
+document.querySelectorAll(".lang-btn").forEach((btn) => {
+  btn.addEventListener("click", () => window.I18N.setLocale(btn.dataset.lang));
+});
+
+window.I18N.onChange(() => {
+  updateEngineOptionLabels();
+  for (const entry of files.values()) renderFileStatus(entry);
+});
 
 pickFilesBtn.addEventListener("click", async () => {
   const selected = await dialog.open({
@@ -116,28 +158,21 @@ event.listen("compress-result", (e) => {
   if (!entry) return;
 
   if (r.status === "compressed") {
-    entry.detail.className = "file-detail ok";
     const pct = r.input_size > 0 ? Math.round((1 - r.output_size / r.input_size) * 100) : 0;
-    entry.detail.textContent = `${humanSize(r.input_size)} → ${humanSize(r.output_size)}  (-${pct} %)  `;
-    const reveal = document.createElement("button");
-    reveal.className = "reveal-link";
-    reveal.textContent = "Afficher dans le Finder";
-    reveal.addEventListener("click", () => core.invoke("reveal_in_finder", { path: r.output }));
-    entry.detail.append(reveal);
+    entry.state = { kind: "compressed", inputSize: r.input_size, outputSize: r.output_size, pct, output: r.output };
   } else if (r.status === "not_smaller") {
-    entry.detail.className = "file-detail";
-    entry.detail.textContent = "déjà optimal, rien à faire";
+    entry.state = { kind: "not_smaller" };
   } else {
-    entry.detail.className = "file-detail err";
-    entry.detail.textContent = r.message || "échec";
+    entry.state = { kind: "error", message: r.message };
   }
+  renderFileStatus(entry);
 });
 
 compressBtn.addEventListener("click", async () => {
   compressBtn.disabled = true;
-  for (const [, entry] of files) {
-    entry.detail.className = "file-detail";
-    entry.detail.textContent = "compression…";
+  for (const entry of files.values()) {
+    entry.state = { kind: "compressing" };
+    renderFileStatus(entry);
   }
   try {
     await core.invoke("compress_files", {
@@ -154,16 +189,16 @@ compressBtn.addEventListener("click", async () => {
 
 installBtn.addEventListener("click", async () => {
   installBtn.disabled = true;
-  installStatus.textContent = "Installation…";
+  installStatus.textContent = t("install.installing");
   try {
     const result = await core.invoke("install_integrations");
     const describe = (label, okLabel, outcome) => {
       if (!outcome) return null;
-      return outcome.Ok !== undefined ? okLabel : `${label} : échec (${outcome.Err ?? ""})`;
+      return outcome.Ok !== undefined ? okLabel : t("install.itemFailed", { label, error: outcome.Err ?? "" });
     };
     installStatus.textContent = [
-      describe("Action rapide", "Action rapide installée", result.quick_action),
-      describe("Outil en ligne de commande", "outil en ligne de commande installé (/usr/local/bin/pdfshrink)", result.cli_link),
+      describe(t("install.quickActionLabel"), t("install.quickActionOk"), result.quick_action),
+      describe(t("install.cliLabel"), t("install.cliOk"), result.cli_link),
     ]
       .filter(Boolean)
       .join(" · ");
@@ -174,4 +209,6 @@ installBtn.addEventListener("click", async () => {
   }
 });
 
+window.I18N.applyToDom();
+updateEngineOptionLabels();
 loadConfig();
