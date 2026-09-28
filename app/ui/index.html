@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>PdfShrinker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>PdfShrinker</h1>
+      <p class="subtitle">Compresse des PDF en restant des PDF.</p>
+    </header>
+
+    <section id="drop-zone" class="drop-zone">
+      <p>Glissez des PDF ici, ou</p>
+      <button id="pick-files">Choisir des fichiers…</button>
+    </section>
+
+    <section class="options">
+      <label>
+        Niveau
+        <select id="level-select">
+          <option value="lossless">Sans perte</option>
+          <option value="low">Léger</option>
+          <option value="medium">Moyen</option>
+          <option value="high">Fort</option>
+        </select>
+      </label>
+      <label>
+        Moteur
+        <select id="engine-select">
+          <option value="rust">Rust (intégré)</option>
+          <option value="gs">Ghostscript</option>
+          <option value="best">Meilleur des deux</option>
+        </select>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" id="set-default" />
+        Définir comme niveau par défaut
+      </label>
+    </section>
+
+    <section class="actions">
+      <button id="compress-btn" disabled>Compresser</button>
+      <button id="clear-btn" class="secondary">Effacer la liste</button>
+    </section>
+
+    <ul id="file-list" class="file-list"></ul>
+
+    <footer>
+      <button id="install-btn" class="link">Installer l'Action rapide et l'outil en ligne de commande…</button>
+      <p id="install-status" class="status"></p>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

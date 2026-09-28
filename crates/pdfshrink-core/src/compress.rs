@@ -1,0 +1,137 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::config::Config;
+use crate::engine::{Engine, EngineChoice, Report};
+use crate::error::{PdfShrinkError, Result};
+use crate::ghostscript_engine::GhostscriptEngine;
+use crate::level::Level;
+use crate::rust_engine::RustEngine;
+
+/// What to compress with. `Default` pulls from the persisted [`Config`], which
+/// is how the CLI, the GUI and the Quick Action all end up agreeing on "the
+/// default level" without talking to each other directly.
+#[derive(Debug, Clone, Copy)]
+pub struct CompressOptions {
+    pub level: Level,
+    pub engine: EngineChoice,
+}
+
+impl Default for CompressOptions {
+    fn default() -> Self {
+        let cfg = Config::load();
+        CompressOptions {
+            level: cfg.default_level,
+            engine: cfg.engine,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Outcome {
+    Compressed { output: PathBuf, report: Report },
+    /// The engine produced a result, but it wasn't smaller than the original;
+    /// nothing was written.
+    NotSmaller,
+}
+
+/// Compress `input` into a sibling `<name>-compressed.<ext>` file (never
+/// overwriting the original, and never overwriting an existing compressed
+/// output — `-compressed-2`, `-compressed-3`, … are used instead).
+pub fn compress_file(input: &Path, opts: &CompressOptions) -> Result<Outcome> {
+    if !input.is_file() {
+        return Err(PdfShrinkError::Io(
+            input.to_path_buf(),
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        ));
+    }
+
+    let profile = opts.level.profile();
+    // Ghostscript's presets always resample images to some degree; route
+    // Lossless through the Rust engine regardless of the caller's choice.
+    let engine_choice = if opts.level == Level::Lossless {
+        EngineChoice::Rust
+    } else {
+        opts.engine
+    };
+
+    let output_path = derive_output_path(input)?;
+    let tmp_path = sibling_tmp_path(&output_path, "pdfshrink-tmp");
+
+    let report = match engine_choice {
+        EngineChoice::Rust => RustEngine.compress(input, &tmp_path, &profile)?,
+        EngineChoice::Ghostscript => {
+            if !GhostscriptEngine.is_available() {
+                return Err(PdfShrinkError::GhostscriptNotFound);
+            }
+            GhostscriptEngine.compress(input, &tmp_path, &profile)?
+        }
+        EngineChoice::Best => best_of_both(input, &tmp_path, &profile)?,
+    };
+
+    if report.output_size >= report.input_size {
+        let _ = fs::remove_file(&tmp_path);
+        return Ok(Outcome::NotSmaller);
+    }
+
+    fs::rename(&tmp_path, &output_path).map_err(|e| PdfShrinkError::Write(output_path.clone(), e))?;
+
+    Ok(Outcome::Compressed {
+        output: output_path,
+        report,
+    })
+}
+
+fn best_of_both(input: &Path, tmp_path: &Path, profile: &crate::level::Profile) -> Result<Report> {
+    let rust_result = RustEngine.compress(input, tmp_path, profile);
+
+    if !GhostscriptEngine.is_available() {
+        return rust_result;
+    }
+
+    let gs_tmp = sibling_tmp_path(tmp_path, "pdfshrink-tmp-gs");
+    let gs_result = GhostscriptEngine.compress(input, &gs_tmp, profile);
+
+    match (rust_result, gs_result) {
+        (Ok(rr), Ok(gr)) if gr.output_size < rr.output_size => {
+            let _ = fs::remove_file(tmp_path);
+            fs::rename(&gs_tmp, tmp_path).map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
+            Ok(gr)
+        }
+        (Ok(rr), _) => {
+            let _ = fs::remove_file(&gs_tmp);
+            Ok(rr)
+        }
+        (Err(_), Ok(gr)) => {
+            fs::rename(&gs_tmp, tmp_path).map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
+            Ok(gr)
+        }
+        (Err(e), Err(_)) => Err(e),
+    }
+}
+
+fn sibling_tmp_path(base: &Path, suffix: &str) -> PathBuf {
+    let mut name = base.file_name().and_then(|n| n.to_str()).unwrap_or("output").to_string();
+    name.push('.');
+    name.push_str(suffix);
+    base.with_file_name(name)
+}
+
+fn derive_output_path(input: &Path) -> Result<PathBuf> {
+    let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+        PdfShrinkError::Io(
+            input.to_path_buf(),
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid file name"),
+        )
+    })?;
+    let ext = input.extension().and_then(|s| s.to_str()).unwrap_or("pdf");
+    let parent = input.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+
+    let mut candidate = parent.join(format!("{stem}-compressed.{ext}"));
+    let mut n = 2;
+    while candidate.exists() {
+        candidate = parent.join(format!("{stem}-compressed-{n}.{ext}"));
+        n += 1;
+    }
+    Ok(candidate)
+}

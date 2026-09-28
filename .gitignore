@@ -1,0 +1,7 @@
+/target
+/app/src-tauri/target
+/app/src-tauri/binaries
+/app/node_modules
+*.dmg
+.DS_Store
+.idea/

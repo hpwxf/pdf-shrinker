@@ -1,0 +1,18 @@
+[package]
+name = "pdfshrink-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+lopdf = { workspace = true }
+image = { workspace = true }
+mozjpeg = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+directories = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

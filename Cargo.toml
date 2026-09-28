@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pdfshrink-core",
+    "crates/pdfshrink-cli",
+    "app/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Pascal Havé <contact@haveneer.com>"]
+
+[workspace.dependencies]
+lopdf = "0.45"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+mozjpeg = "0.10"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+directories = "6"
+clap = { version = "4", features = ["derive"] }
+rayon = "1"
+anyhow = "1"
+thiserror = "2"
+tempfile = "3"
