@@ -43,6 +43,7 @@ impl Level {
                 target_dpi: 0.0,
                 trigger_ratio: 0.0,
                 jpeg_quality: 0,
+                max_dimension: 0,
             },
             Level::Low => Profile {
                 level: *self,
@@ -50,6 +51,7 @@ impl Level {
                 target_dpi: 300.0,
                 trigger_ratio: 1.5,
                 jpeg_quality: 85,
+                max_dimension: 4200,
             },
             Level::Medium => Profile {
                 level: *self,
@@ -57,6 +59,7 @@ impl Level {
                 target_dpi: 150.0,
                 trigger_ratio: 1.5,
                 jpeg_quality: 75,
+                max_dimension: 3000,
             },
             Level::High => Profile {
                 level: *self,
@@ -64,6 +67,7 @@ impl Level {
                 target_dpi: 96.0,
                 trigger_ratio: 1.5,
                 jpeg_quality: 55,
+                max_dimension: 2000,
             },
         }
     }
@@ -77,7 +81,15 @@ pub struct Profile {
     pub resample_images: bool,
     /// Target resolution (in effective DPI as placed on the page) images are downsampled to.
     pub target_dpi: f32,
-    /// An image is only touched if its effective DPI exceeds `target_dpi * trigger_ratio`.
+    /// An image is only *downsampled* if its effective DPI exceeds
+    /// `target_dpi * trigger_ratio`; it is still re-encoded at `jpeg_quality`
+    /// either way (see `image_ops.rs`).
     pub trigger_ratio: f32,
     pub jpeg_quality: u8,
+    /// Hard cap, in pixels, on an image's longest side, applied regardless of
+    /// its effective DPI. Placement-derived DPI can be fooled by an image
+    /// drawn oversized and then clipped to the visible page area (a common
+    /// "full-bleed background" technique) — this cap is the backstop for that
+    /// case. `0` disables it.
+    pub max_dimension: u32,
 }

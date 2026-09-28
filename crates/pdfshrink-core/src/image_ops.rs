@@ -1,9 +1,18 @@
-//! Downsamples and re-encodes raster images embedded in a [`lopdf::Document`].
+//! Re-encodes (and, when oversized, downsamples) raster images embedded in a
+//! [`lopdf::Document`].
 //!
 //! Only the image kinds we can safely round-trip are touched: JPEG (`DCTDecode`)
 //! and raw 8-bit-per-component DeviceGray/DeviceRGB samples (uncompressed or
 //! `FlateDecode`). Anything else (JBIG2, JPX, CCITT, indexed, CMYK, image masks,
 //! 16-bit, …) is left completely untouched and counted as skipped.
+//!
+//! Every eligible image is re-encoded as JPEG at the profile's target quality
+//! regardless of its resolution — a raw/Flate-compressed bitmap shrinks a lot
+//! just from that, even at unchanged pixel dimensions. Downsampling on top of
+//! that only happens once the image's *effective on-page DPI* (see
+//! `placement.rs`) exceeds the profile's target. The "only replace if smaller"
+//! check in `resample_one` is what keeps this safe for images that were
+//! already well-optimized.
 
 use std::collections::{HashMap, HashSet};
 use std::panic::{self, AssertUnwindSafe};
@@ -186,17 +195,41 @@ fn decode_pixels(stream: &Stream, color: &ColorKind, filter: &FilterKind, w: u32
     }
 }
 
-fn target_dims(w: u32, h: u32, effective_dpi: f32, profile: &Profile) -> Option<(u32, u32)> {
-    if effective_dpi <= profile.target_dpi * profile.trigger_ratio {
-        return None;
+/// Target pixel dimensions for an image at `effective_dpi`. Downsampling only
+/// kicks in once the image is oversized relative to the profile's target DPI —
+/// but the image is re-encoded (recompressed) either way: `trigger_ratio` gates
+/// *resizing*, not whether the image gets touched at all. That distinction
+/// matters a lot for images whose declared placement makes them look
+/// low-resolution (e.g. a background photo drawn oversized and clipped to the
+/// page) while still being stored as raw/Flate pixels that JPEG re-encoding
+/// alone shrinks dramatically.
+///
+/// `max_dimension` is a second, independent trigger: a hard cap on the longest
+/// side that applies even when the DPI heuristic above didn't fire, since that
+/// heuristic trusts the placement matrix — which a clipped, oversized-then-cropped
+/// image can make wildly overstate the image's real on-page footprint. Whichever
+/// of the two wants a smaller result wins.
+fn target_dims(w: u32, h: u32, effective_dpi: f32, profile: &Profile) -> (u32, u32) {
+    let dpi_scale = if effective_dpi > 0.0 && effective_dpi > profile.target_dpi * profile.trigger_ratio {
+        (profile.target_dpi / effective_dpi).clamp(0.05, 1.0)
+    } else {
+        1.0
+    };
+
+    let longest = w.max(h) as f32;
+    let cap_scale = if profile.max_dimension > 0 && longest > profile.max_dimension as f32 {
+        profile.max_dimension as f32 / longest
+    } else {
+        1.0
+    };
+
+    let scale = dpi_scale.min(cap_scale);
+    if scale >= 1.0 {
+        return (w, h);
     }
-    let scale = (profile.target_dpi / effective_dpi).clamp(0.05, 1.0);
     let new_w = ((w as f32) * scale).round().max(1.0) as u32;
     let new_h = ((h as f32) * scale).round().max(1.0) as u32;
-    if new_w >= w && new_h >= h {
-        return None;
-    }
-    Some((new_w, new_h))
+    (new_w, new_h)
 }
 
 fn encode_jpeg(data: &[u8], w: u32, h: u32, gray: bool, quality: u8) -> Option<Vec<u8>> {
@@ -252,7 +285,8 @@ fn resample_one(
         (width, height, color, filter, effective_dpi, smask_id, stream.content.len())
     };
 
-    let (new_w, new_h) = target_dims(width, height, effective_dpi, profile)?;
+    let (new_w, new_h) = target_dims(width, height, effective_dpi, profile);
+    let needs_resize = (new_w, new_h) != (width, height);
 
     let pixels = {
         let stream = doc.objects.get(&id)?.as_stream().ok()?;
@@ -261,12 +295,20 @@ fn resample_one(
 
     let (jpeg_bytes, gray) = match pixels {
         Pixels::Gray(img) => {
-            let resized = image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3);
-            (encode_jpeg(resized.as_raw(), new_w, new_h, true, profile.jpeg_quality)?, true)
+            let img = if needs_resize {
+                image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3)
+            } else {
+                img
+            };
+            (encode_jpeg(img.as_raw(), new_w, new_h, true, profile.jpeg_quality)?, true)
         }
         Pixels::Rgb(img) => {
-            let resized = image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3);
-            (encode_jpeg(resized.as_raw(), new_w, new_h, false, profile.jpeg_quality)?, false)
+            let img = if needs_resize {
+                image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3)
+            } else {
+                img
+            };
+            (encode_jpeg(img.as_raw(), new_w, new_h, false, profile.jpeg_quality)?, false)
         }
     };
 

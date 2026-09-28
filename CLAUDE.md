@@ -27,6 +27,11 @@ cargo run -p pdfshrink-cli -- install --quick-action --cli-link   # writes to ~/
 # Generate a throwaway test PDF (oversized JPEG on one page) instead of needing a real file
 cargo run -p pdfshrink-core --example make_fixture -- /path/to/out.pdf
 
+# Diagnose a disappointing compression ratio: list every image XObject (id, size, filter,
+# colorspace) and how many exceed 2000px on a side — run on input vs. output to see what
+# actually got touched
+cargo run --release -p pdfshrink-core --example inspect_images -- file.pdf
+
 # App: dev loop, build .app (needs the CLI sidecar staged first — see below)
 cd app && cargo tauri dev
 cd app && cargo tauri build --target aarch64-apple-darwin --bundles dmg
@@ -69,16 +74,22 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   XObject) content streams, tracking the CTM through `q`/`Q`/`cm`, and measuring the transformed unit
   square at each `Do`. When an image is drawn more than once, the smallest DPI (its most demanding
   placement) wins. Images the walk never reaches fall back to the document's largest page size
-  (conservative — least likely to trigger unwanted resampling).
+  (conservative — least likely to trigger unwanted resampling). This CTM-based size is not reliable
+  for an image drawn oversized and then clipped to the visible page area (a common "full-bleed
+  background" export from slide tools) — it overstates the on-page footprint and so understates the
+  DPI, which `image_ops.rs`'s `max_dimension` cap exists specifically to catch.
 - `image_ops.rs`: only touches image kinds that round-trip safely — `DCTDecode` (JPEG) and raw
   8-bit-per-component DeviceGray/DeviceRGB (uncompressed or single-`FlateDecode`), including
   `ICCBased` colorspaces resolved via their stream's `/N`. Everything else (JBIG2, JPX, CCITT,
-  indexed, CMYK, image masks, 16-bit…) is left untouched and counted as skipped. Resize via
-  `image::imageops::resize` (Lanczos3), re-encode via `mozjpeg` (wrapped in `catch_unwind` per its
-  own safety note), and only replace the object if the new bytes are actually smaller. An `SMask` is
-  resized to match its parent's new dimensions and kept in Flate (never re-encoded to JPEG, to avoid
-  alpha artifacts) via a scratch `lopdf::Stream::compress()` call that reuses lopdf's own
-  "keep raw if compression doesn't help" logic.
+  indexed, CMYK, image masks, 16-bit…) is left untouched and counted as skipped. Every eligible image
+  is re-encoded as JPEG at the profile's `jpeg_quality` regardless of resolution (a raw/Flate bitmap
+  shrinks a lot from that alone); on top of that, it's downsampled (`image::imageops::resize`,
+  Lanczos3) if either its placement-derived DPI exceeds `target_dpi * trigger_ratio` *or* its longest
+  side exceeds the profile's `max_dimension` — whichever wants the smaller result wins. Re-encode via
+  `mozjpeg` (wrapped in `catch_unwind` per its own safety note), and only replace the object if the
+  new bytes are actually smaller. An `SMask` is resized to match its parent's new dimensions and kept
+  in Flate (never re-encoded to JPEG, to avoid alpha artifacts) via a scratch `lopdf::Stream::compress()`
+  call that reuses lopdf's own "keep raw if compression doesn't help" logic.
 - `config.rs`: `Config` (default level + engine) persisted at
   `~/Library/Application Support/com.haveneer.pdfshrinker/config.toml`. This is the single source of
   truth the CLI, the app and the Quick Action all read — the app's "set as default" checkbox writing
