@@ -29,7 +29,10 @@ impl Default for CompressOptions {
 
 #[derive(Debug)]
 pub enum Outcome {
-    Compressed { output: PathBuf, report: Report },
+    Compressed {
+        output: PathBuf,
+        report: Report,
+    },
     /// The engine produced a result, but it wasn't smaller than the original;
     /// nothing was written.
     NotSmaller,
@@ -74,7 +77,8 @@ pub fn compress_file(input: &Path, opts: &CompressOptions) -> Result<Outcome> {
         return Ok(Outcome::NotSmaller);
     }
 
-    fs::rename(&tmp_path, &output_path).map_err(|e| PdfShrinkError::Write(output_path.clone(), e))?;
+    fs::rename(&tmp_path, &output_path)
+        .map_err(|e| PdfShrinkError::Write(output_path.clone(), e))?;
 
     Ok(Outcome::Compressed {
         output: output_path,
@@ -95,7 +99,8 @@ fn best_of_both(input: &Path, tmp_path: &Path, profile: &crate::level::Profile) 
     match (rust_result, gs_result) {
         (Ok(rr), Ok(gr)) if gr.output_size < rr.output_size => {
             let _ = fs::remove_file(tmp_path);
-            fs::rename(&gs_tmp, tmp_path).map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
+            fs::rename(&gs_tmp, tmp_path)
+                .map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
             Ok(gr)
         }
         (Ok(rr), _) => {
@@ -103,7 +108,8 @@ fn best_of_both(input: &Path, tmp_path: &Path, profile: &crate::level::Profile) 
             Ok(rr)
         }
         (Err(_), Ok(gr)) => {
-            fs::rename(&gs_tmp, tmp_path).map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
+            fs::rename(&gs_tmp, tmp_path)
+                .map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
             Ok(gr)
         }
         (Err(e), Err(_)) => Err(e),
@@ -111,7 +117,11 @@ fn best_of_both(input: &Path, tmp_path: &Path, profile: &crate::level::Profile) 
 }
 
 fn sibling_tmp_path(base: &Path, suffix: &str) -> PathBuf {
-    let mut name = base.file_name().and_then(|n| n.to_str()).unwrap_or("output").to_string();
+    let mut name = base
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("output")
+        .to_string();
     name.push('.');
     name.push_str(suffix);
     base.with_file_name(name)
@@ -125,7 +135,10 @@ fn derive_output_path(input: &Path) -> Result<PathBuf> {
         )
     })?;
     let ext = input.extension().and_then(|s| s.to_str()).unwrap_or("pdf");
-    let parent = input.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let parent = input
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
 
     let mut candidate = parent.join(format!("{stem}-compressed.{ext}"));
     let mut n = 2;

@@ -27,8 +27,8 @@ impl Engine for RustEngine {
             .map_err(|e| PdfShrinkError::Io(input.to_path_buf(), e))?
             .len();
 
-        let mut doc =
-            Document::load(input).map_err(|e| PdfShrinkError::InvalidPdf(input.to_path_buf(), e))?;
+        let mut doc = Document::load(input)
+            .map_err(|e| PdfShrinkError::InvalidPdf(input.to_path_buf(), e))?;
 
         if doc.is_encrypted() {
             return Err(PdfShrinkError::Encrypted(input.to_path_buf()));
@@ -50,7 +50,8 @@ impl Engine for RustEngine {
         doc.compress();
 
         {
-            let file = File::create(output).map_err(|e| PdfShrinkError::Write(output.to_path_buf(), e))?;
+            let file =
+                File::create(output).map_err(|e| PdfShrinkError::Write(output.to_path_buf(), e))?;
             let mut writer = BufWriter::new(file);
             doc.save_modern(&mut writer)
                 .map_err(|e| PdfShrinkError::Write(output.to_path_buf(), e))?;
@@ -90,7 +91,10 @@ fn dedup_streams(doc: &mut Document) {
         if let Object::Stream(s) = obj {
             let mut hasher = DefaultHasher::new();
             s.content.hash(&mut hasher);
-            buckets.entry((hasher.finish(), s.content.len())).or_default().push(*id);
+            buckets
+                .entry((hasher.finish(), s.content.len()))
+                .or_default()
+                .push(*id);
         }
     }
 

@@ -5,7 +5,11 @@ use std::process::ExitCode;
 pub fn run(quick_action: bool, cli_link: bool) -> ExitCode {
     // With neither flag, do both — that's what a first run from a freshly
     // installed app should do.
-    let (quick_action, cli_link) = if !quick_action && !cli_link { (true, true) } else { (quick_action, cli_link) };
+    let (quick_action, cli_link) = if !quick_action && !cli_link {
+        (true, true)
+    } else {
+        (quick_action, cli_link)
+    };
 
     let exec = match pdfshrink_core::integration::resolve_exec_path() {
         Ok(p) => p,
@@ -37,5 +41,9 @@ pub fn run(quick_action: bool, cli_link: bool) -> ExitCode {
         }
     }
 
-    if ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
 }

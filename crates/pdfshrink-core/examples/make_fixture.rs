@@ -8,13 +8,21 @@ use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, Stream, dictionary};
 
 fn main() {
-    let out = env::args().nth(1).unwrap_or_else(|| "fixture.pdf".to_string());
+    let out = env::args()
+        .nth(1)
+        .unwrap_or_else(|| "fixture.pdf".to_string());
 
     let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(1600, 2000, |x, y| {
-        Rgb([((x * 3) % 256) as u8, ((y * 5) % 256) as u8, (((x + y) / 2) % 256) as u8])
+        Rgb([
+            ((x * 3) % 256) as u8,
+            ((y * 5) % 256) as u8,
+            (((x + y) / 2) % 256) as u8,
+        ])
     });
     let mut jpeg = Vec::new();
-    JpegEncoder::new_with_quality(&mut jpeg, 95).encode_image(&img).unwrap();
+    JpegEncoder::new_with_quality(&mut jpeg, 95)
+        .encode_image(&img)
+        .unwrap();
 
     let img_dict = dictionary! {
         "Type" => "XObject", "Subtype" => "Image",
@@ -54,9 +62,11 @@ fn main() {
         "Resources" => resources,
         "MediaBox" => vec![Object::Real(0.0), Object::Real(0.0), Object::Real(612.0), Object::Real(792.0)],
     });
-    let pages = dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page_id)] };
+    let pages =
+        dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page_id)] };
     doc.objects.insert(pages_id, Object::Dictionary(pages));
-    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) });
+    let catalog_id =
+        doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) });
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     doc.save(&out).unwrap();

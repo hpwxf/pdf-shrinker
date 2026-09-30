@@ -59,7 +59,11 @@ fn is_candidate_image(stream: &Stream) -> bool {
         .and_then(Object::as_name)
         .map(|n| n == b"Image")
         .unwrap_or(false);
-    let is_mask = stream.dict.get(b"ImageMask").and_then(Object::as_bool).unwrap_or(false);
+    let is_mask = stream
+        .dict
+        .get(b"ImageMask")
+        .and_then(Object::as_bool)
+        .unwrap_or(false);
     is_image && !is_mask
 }
 
@@ -82,12 +86,8 @@ fn fallback_page_size_pt(doc: &Document) -> (f32, f32) {
         if let Ok(page) = doc.get_dictionary(page_id)
             && let Ok(bbox) = page.get(b"MediaBox").and_then(Object::as_array)
             && bbox.len() == 4
-            && let (Ok(x0), Ok(y0), Ok(x1), Ok(y1)) = (
-                num(&bbox[0]),
-                num(&bbox[1]),
-                num(&bbox[2]),
-                num(&bbox[3]),
-            )
+            && let (Ok(x0), Ok(y0), Ok(x1), Ok(y1)) =
+                (num(&bbox[0]), num(&bbox[1]), num(&bbox[2]), num(&bbox[3]))
         {
             let w = (x1 - x0).abs();
             let h = (y1 - y0).abs();
@@ -101,7 +101,9 @@ fn fallback_page_size_pt(doc: &Document) -> (f32, f32) {
 }
 
 fn num(o: &Object) -> Result<f32, ()> {
-    o.as_f32().or_else(|_| o.as_i64().map(|i| i as f32)).map_err(|_| ())
+    o.as_f32()
+        .or_else(|_| o.as_i64().map(|i| i as f32))
+        .map_err(|_| ())
 }
 
 enum ColorKind {
@@ -159,17 +161,29 @@ enum Pixels {
     Rgb(RgbImage),
 }
 
-fn decode_pixels(stream: &Stream, color: &ColorKind, filter: &FilterKind, w: u32, h: u32) -> Option<Pixels> {
+fn decode_pixels(
+    stream: &Stream,
+    color: &ColorKind,
+    filter: &FilterKind,
+    w: u32,
+    h: u32,
+) -> Option<Pixels> {
     match filter {
         FilterKind::Dct => {
-            let img = image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg).ok()?;
+            let img =
+                image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
+                    .ok()?;
             Some(match color {
                 ColorKind::Gray => Pixels::Gray(img.into_luma8()),
                 ColorKind::Rgb => Pixels::Rgb(img.into_rgb8()),
             })
         }
         FilterKind::RawFlate | FilterKind::RawNone => {
-            let bpc = stream.dict.get(b"BitsPerComponent").and_then(Object::as_i64).unwrap_or(8);
+            let bpc = stream
+                .dict
+                .get(b"BitsPerComponent")
+                .and_then(Object::as_i64)
+                .unwrap_or(8);
             if bpc != 8 {
                 return None;
             }
@@ -210,11 +224,12 @@ fn decode_pixels(stream: &Stream, color: &ColorKind, filter: &FilterKind, w: u32
 /// image can make wildly overstate the image's real on-page footprint. Whichever
 /// of the two wants a smaller result wins.
 fn target_dims(w: u32, h: u32, effective_dpi: f32, profile: &Profile) -> (u32, u32) {
-    let dpi_scale = if effective_dpi > 0.0 && effective_dpi > profile.target_dpi * profile.trigger_ratio {
-        (profile.target_dpi / effective_dpi).clamp(0.05, 1.0)
-    } else {
-        1.0
-    };
+    let dpi_scale =
+        if effective_dpi > 0.0 && effective_dpi > profile.target_dpi * profile.trigger_ratio {
+            (profile.target_dpi / effective_dpi).clamp(0.05, 1.0)
+        } else {
+            1.0
+        };
 
     let longest = w.max(h) as f32;
     let cap_scale = if profile.max_dimension > 0 && longest > profile.max_dimension as f32 {
@@ -281,8 +296,20 @@ fn resample_one(
             let dpi_y = height as f32 / (ph / 72.0);
             (dpi_x + dpi_y) / 2.0
         });
-        let smask_id = stream.dict.get(b"SMask").and_then(Object::as_reference).ok();
-        (width, height, color, filter, effective_dpi, smask_id, stream.content.len())
+        let smask_id = stream
+            .dict
+            .get(b"SMask")
+            .and_then(Object::as_reference)
+            .ok();
+        (
+            width,
+            height,
+            color,
+            filter,
+            effective_dpi,
+            smask_id,
+            stream.content.len(),
+        )
     };
 
     let (new_w, new_h) = target_dims(width, height, effective_dpi, profile);
@@ -300,7 +327,10 @@ fn resample_one(
             } else {
                 img
             };
-            (encode_jpeg(img.as_raw(), new_w, new_h, true, profile.jpeg_quality)?, true)
+            (
+                encode_jpeg(img.as_raw(), new_w, new_h, true, profile.jpeg_quality)?,
+                true,
+            )
         }
         Pixels::Rgb(img) => {
             let img = if needs_resize {
@@ -308,7 +338,10 @@ fn resample_one(
             } else {
                 img
             };
-            (encode_jpeg(img.as_raw(), new_w, new_h, false, profile.jpeg_quality)?, false)
+            (
+                encode_jpeg(img.as_raw(), new_w, new_h, false, profile.jpeg_quality)?,
+                false,
+            )
         }
     };
 
@@ -323,11 +356,17 @@ fn resample_one(
         stream.dict.set("BitsPerComponent", 8i64);
         stream.dict.set(
             "ColorSpace",
-            Object::Name(if gray { b"DeviceGray".to_vec() } else { b"DeviceRGB".to_vec() }),
+            Object::Name(if gray {
+                b"DeviceGray".to_vec()
+            } else {
+                b"DeviceRGB".to_vec()
+            }),
         );
         stream.dict.remove(b"DecodeParms");
         stream.dict.remove(b"Decode");
-        stream.dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+        stream
+            .dict
+            .set("Filter", Object::Name(b"DCTDecode".to_vec()));
         stream.set_content(jpeg_bytes);
     }
 
@@ -346,7 +385,11 @@ fn resample_smask(doc: &mut Document, id: ObjectId, new_w: u32, new_h: u32) {
         if w == 0 || h == 0 || (new_w >= w && new_h >= h) {
             return None;
         }
-        let bpc = stream.dict.get(b"BitsPerComponent").and_then(Object::as_i64).unwrap_or(8);
+        let bpc = stream
+            .dict
+            .get(b"BitsPerComponent")
+            .and_then(Object::as_i64)
+            .unwrap_or(8);
         if bpc != 8 {
             return None;
         }
@@ -363,17 +406,26 @@ fn resample_smask(doc: &mut Document, id: ObjectId, new_w: u32, new_h: u32) {
     })();
 
     let Some(img) = decoded else { return };
-    let resized = image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3);
+    let resized =
+        image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3);
     let (content, has_filter) = flate_encode(resized.into_raw());
 
-    if let Some(stream) = doc.objects.get_mut(&id).and_then(|o| o.as_stream_mut().ok()) {
+    if let Some(stream) = doc
+        .objects
+        .get_mut(&id)
+        .and_then(|o| o.as_stream_mut().ok())
+    {
         stream.dict.set("Width", new_w as i64);
         stream.dict.set("Height", new_h as i64);
         stream.dict.set("BitsPerComponent", 8i64);
-        stream.dict.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+        stream
+            .dict
+            .set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
         stream.dict.remove(b"DecodeParms");
         if has_filter {
-            stream.dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+            stream
+                .dict
+                .set("Filter", Object::Name(b"FlateDecode".to_vec()));
         } else {
             stream.dict.remove(b"Filter");
         }

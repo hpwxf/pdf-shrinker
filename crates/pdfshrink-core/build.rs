@@ -7,8 +7,11 @@
 use std::process::Command;
 
 fn main() {
-    let commit = run_git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
-    let dirty = run_git(&["status", "--porcelain"]).map(|out| !out.is_empty()).unwrap_or(false);
+    let commit =
+        run_git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
+    let dirty = run_git(&["status", "--porcelain"])
+        .map(|out| !out.is_empty())
+        .unwrap_or(false);
 
     println!("cargo:rustc-env=PDFSHRINK_GIT_COMMIT={commit}");
     println!("cargo:rustc-env=PDFSHRINK_GIT_DIRTY={dirty}");

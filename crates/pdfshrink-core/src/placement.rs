@@ -36,7 +36,9 @@ fn placed_size(m: Mat) -> (f32, f32) {
 }
 
 fn operand_f32(op: &Object) -> Option<f32> {
-    op.as_f32().ok().or_else(|| op.as_i64().ok().map(|i| i as f32))
+    op.as_f32()
+        .ok()
+        .or_else(|| op.as_i64().ok().map(|i| i as f32))
 }
 
 fn matrix_from_operands(ops: &[Object]) -> Option<Mat> {
@@ -71,14 +73,25 @@ pub fn compute_image_dpi(doc: &Document) -> HashMap<ObjectId, f32> {
         let Ok((resources, extra_ids)) = doc.get_page_resources(page_id) else {
             continue;
         };
-        let extra_dicts: Vec<&Dictionary> = extra_ids.iter().filter_map(|id| doc.get_dictionary(*id).ok()).collect();
+        let extra_dicts: Vec<&Dictionary> = extra_ids
+            .iter()
+            .filter_map(|id| doc.get_dictionary(*id).ok())
+            .collect();
         let mut resource_stack: Vec<&Dictionary> = Vec::new();
         if let Some(r) = resources {
             resource_stack.push(r);
         }
         resource_stack.extend(extra_dicts);
 
-        walk_ops(doc, &content.operations, IDENTITY, &resource_stack, &mut dpi, 0, &mut budget);
+        walk_ops(
+            doc,
+            &content.operations,
+            IDENTITY,
+            &resource_stack,
+            &mut dpi,
+            0,
+            &mut budget,
+        );
     }
     dpi
 }
@@ -142,7 +155,9 @@ fn walk_ops(
                 };
                 match stream.dict.get(b"Subtype").and_then(Object::as_name) {
                     Ok(b"Image") => record_image_dpi(stream, cur, id, dpi),
-                    Ok(b"Form") => descend_into_form(doc, stream, cur, resource_stack, dpi, depth, budget),
+                    Ok(b"Form") => {
+                        descend_into_form(doc, stream, cur, resource_stack, dpi, depth, budget)
+                    }
                     _ => {}
                 }
             }
@@ -151,7 +166,12 @@ fn walk_ops(
     }
 }
 
-fn record_image_dpi(stream: &lopdf::Stream, ctm: Mat, id: ObjectId, dpi: &mut HashMap<ObjectId, f32>) {
+fn record_image_dpi(
+    stream: &lopdf::Stream,
+    ctm: Mat,
+    id: ObjectId,
+    dpi: &mut HashMap<ObjectId, f32>,
+) {
     let (Ok(w), Ok(h)) = (
         stream.dict.get(b"Width").and_then(Object::as_i64),
         stream.dict.get(b"Height").and_then(Object::as_i64),
@@ -202,5 +222,13 @@ fn descend_into_form(
     }
     new_stack.extend_from_slice(resource_stack);
 
-    walk_ops(doc, &content.operations, new_ctm, &new_stack, dpi, depth + 1, budget);
+    walk_ops(
+        doc,
+        &content.operations,
+        new_ctm,
+        &new_stack,
+        dpi,
+        depth + 1,
+        budget,
+    );
 }

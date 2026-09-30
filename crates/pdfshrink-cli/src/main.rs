@@ -6,10 +6,14 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-use pdfshrink_core::{compress_file, CompressOptions, Config, EngineChoice, Level, Outcome};
+use pdfshrink_core::{CompressOptions, Config, EngineChoice, Level, Outcome, compress_file};
 
 #[derive(Parser)]
-#[command(name = "pdfshrink", version, about = "Compress PDFs while keeping them PDFs.")]
+#[command(
+    name = "pdfshrink",
+    version,
+    about = "Compress PDFs while keeping them PDFs."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -70,7 +74,10 @@ fn main() -> ExitCode {
 
     match &cli.command {
         Some(Command::Config { action }) => run_config(action),
-        Some(Command::Install { quick_action, cli_link }) => install::run(*quick_action, *cli_link),
+        Some(Command::Install {
+            quick_action,
+            cli_link,
+        }) => install::run(*quick_action, *cli_link),
         None => run_compress(cli),
     }
 }
@@ -95,7 +102,9 @@ fn run_config(action: &ConfigAction) -> ExitCode {
                 "level" | "default_level" => match Level::parse(value) {
                     Some(l) => cfg.default_level = l,
                     None => {
-                        eprintln!("pdfshrink: unknown level '{value}' (expected: lossless, low, medium, high)");
+                        eprintln!(
+                            "pdfshrink: unknown level '{value}' (expected: lossless, low, medium, high)"
+                        );
                         return ExitCode::from(1);
                     }
                 },
@@ -153,11 +162,16 @@ fn run_compress(cli: Cli) -> ExitCode {
     let opts = CompressOptions { level, engine };
 
     if let Some(jobs) = cli.jobs {
-        let _ = rayon::ThreadPoolBuilder::new().num_threads(jobs).build_global();
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(jobs)
+            .build_global();
     }
 
-    let results: Vec<(PathBuf, pdfshrink_core::Result<Outcome>)> =
-        cli.files.par_iter().map(|f| (f.clone(), compress_file(f, &opts))).collect();
+    let results: Vec<(PathBuf, pdfshrink_core::Result<Outcome>)> = cli
+        .files
+        .par_iter()
+        .map(|f| (f.clone(), compress_file(f, &opts)))
+        .collect();
 
     let mut had_error = false;
     let mut had_not_smaller = false;
@@ -174,7 +188,11 @@ fn run_compress(cli: Cli) -> ExitCode {
                     report.ratio() * 100.0,
                 );
                 if cli.notify {
-                    notify(&format!("{}: -{:.0} %", file_name(output), report.ratio() * 100.0));
+                    notify(&format!(
+                        "{}: -{:.0} %",
+                        file_name(output),
+                        report.ratio() * 100.0
+                    ));
                 }
             }
             Ok(Outcome::NotSmaller) => {
@@ -219,7 +237,10 @@ fn human_size(bytes: u64) -> String {
 }
 
 fn file_name(p: &Path) -> String {
-    p.file_name().and_then(|s| s.to_str()).unwrap_or("fichier").to_string()
+    p.file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("fichier")
+        .to_string()
 }
 
 fn notify(message: &str) {
@@ -227,7 +248,10 @@ fn notify(message: &str) {
         "display notification {} with title \"PdfShrinker\"",
         osascript_quote(message)
     );
-    let _ = std::process::Command::new("osascript").arg("-e").arg(script).output();
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output();
 }
 
 fn osascript_quote(s: &str) -> String {

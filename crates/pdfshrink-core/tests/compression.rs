@@ -4,14 +4,24 @@
 use image::codecs::jpeg::JpegEncoder;
 use image::{ImageBuffer, Rgb};
 use lopdf::content::{Content, Operation};
-use lopdf::{Dictionary, Document, EncryptionState, EncryptionVersion, Object, ObjectId, Permissions, Stream, dictionary};
+use lopdf::{
+    Dictionary, Document, EncryptionState, EncryptionVersion, Object, ObjectId, Permissions,
+    Stream, dictionary,
+};
 use tempfile::tempdir;
 
-use pdfshrink_core::{CompressOptions, Engine, EngineChoice, Level, Outcome, PdfShrinkError, RustEngine, compress_file};
+use pdfshrink_core::{
+    CompressOptions, Engine, EngineChoice, Level, Outcome, PdfShrinkError, RustEngine,
+    compress_file,
+};
 
 fn make_jpeg_bytes(w: u32, h: u32, quality: u8) -> Vec<u8> {
     let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_fn(w, h, |x, y| {
-        Rgb([((x * 7) % 256) as u8, ((y * 13) % 256) as u8, (((x + y) * 3) % 256) as u8])
+        Rgb([
+            ((x * 7) % 256) as u8,
+            ((y * 13) % 256) as u8,
+            (((x + y) * 3) % 256) as u8,
+        ])
     });
     let mut buf = Vec::new();
     JpegEncoder::new_with_quality(&mut buf, quality)
@@ -72,7 +82,13 @@ fn jpeg_image_stream(jpeg: Vec<u8>, w: u32, h: u32) -> Stream {
 
 /// Builds a minimal one-page PDF with a single image XObject drawn to fill
 /// `draw_w` x `draw_h` PDF points on a `page_w` x `page_h` page.
-fn build_single_image_pdf(image: Stream, page_w: f64, page_h: f64, draw_w: f64, draw_h: f64) -> (Document, ObjectId) {
+fn build_single_image_pdf(
+    image: Stream,
+    page_w: f64,
+    page_h: f64,
+    draw_w: f64,
+    draw_h: f64,
+) -> (Document, ObjectId) {
     let mut doc = Document::with_version("1.5");
     let pages_id = doc.new_object_id();
     let img_id = doc.add_object(image);
@@ -137,11 +153,11 @@ fn build_text_only_pdf() -> Document {
     let content_bytes = Content {
         operations: vec![
             Operation::new("BT", vec![]),
-            Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), Object::Integer(12)]),
             Operation::new(
-                "Td",
-                vec![Object::Integer(72), Object::Integer(720)],
+                "Tf",
+                vec![Object::Name(b"F1".to_vec()), Object::Integer(12)],
             ),
+            Operation::new("Td", vec![Object::Integer(72), Object::Integer(720)]),
             Operation::new("Tj", vec![Object::string_literal("Hello, PdfShrinker!")]),
             Operation::new("ET", vec![]),
         ],
@@ -211,13 +227,23 @@ fn medium_downsamples_an_oversized_jpeg() {
     let input_size = save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    let report = RustEngine.compress(&input, &output, &Level::Medium.profile()).unwrap();
+    let report = RustEngine
+        .compress(&input, &output, &Level::Medium.profile())
+        .unwrap();
 
     assert_eq!(report.images_resampled, 1);
-    assert!(report.output_size < input_size, "expected shrinkage: {} -> {}", input_size, report.output_size);
+    assert!(
+        report.output_size < input_size,
+        "expected shrinkage: {} -> {}",
+        input_size,
+        report.output_size
+    );
 
     let (w, h) = reload_image_dims(&output, img_id);
-    assert!(w < 1200 && h < 1200, "image should have been downsampled, got {w}x{h}");
+    assert!(
+        w < 1200 && h < 1200,
+        "image should have been downsampled, got {w}x{h}"
+    );
 
     // Page count and basic structure must survive the round trip.
     let reloaded = Document::load(&output).unwrap();
@@ -235,7 +261,9 @@ fn lossless_never_touches_image_pixels() {
     save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    let report = RustEngine.compress(&input, &output, &Level::Lossless.profile()).unwrap();
+    let report = RustEngine
+        .compress(&input, &output, &Level::Lossless.profile())
+        .unwrap();
 
     assert_eq!(report.images_resampled, 0);
     let (w, h) = reload_image_dims(&output, img_id);
@@ -250,7 +278,13 @@ fn smask_is_resized_alongside_its_parent_image() {
     let mut main = make_flate_rgb_stream(1000, 1000);
     let smask = make_gray_smask(1000, 1000);
 
-    let (mut doc, img_id) = build_single_image_pdf(Stream::new(Dictionary::new(), vec![]), 300.0, 300.0, 150.0, 150.0);
+    let (mut doc, img_id) = build_single_image_pdf(
+        Stream::new(Dictionary::new(), vec![]),
+        300.0,
+        300.0,
+        150.0,
+        150.0,
+    );
     // Swap in the real image + smask now that we have a document to add the smask to.
     let smask_id = doc.add_object(smask);
     main.dict.set("SMask", Object::Reference(smask_id));
@@ -259,20 +293,46 @@ fn smask_is_resized_alongside_its_parent_image() {
     save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    RustEngine.compress(&input, &output, &Level::Medium.profile()).unwrap();
+    RustEngine
+        .compress(&input, &output, &Level::Medium.profile())
+        .unwrap();
 
     let reloaded = Document::load(&output).unwrap();
     let main_stream = reloaded.get_object(img_id).unwrap().as_stream().unwrap();
-    let smask_ref = main_stream.dict.get(b"SMask").and_then(Object::as_reference).unwrap();
+    let smask_ref = main_stream
+        .dict
+        .get(b"SMask")
+        .and_then(Object::as_reference)
+        .unwrap();
     let smask_stream = reloaded.get_object(smask_ref).unwrap().as_stream().unwrap();
 
-    let main_w = main_stream.dict.get(b"Width").and_then(Object::as_i64).unwrap();
-    let main_h = main_stream.dict.get(b"Height").and_then(Object::as_i64).unwrap();
-    let mask_w = smask_stream.dict.get(b"Width").and_then(Object::as_i64).unwrap();
-    let mask_h = smask_stream.dict.get(b"Height").and_then(Object::as_i64).unwrap();
+    let main_w = main_stream
+        .dict
+        .get(b"Width")
+        .and_then(Object::as_i64)
+        .unwrap();
+    let main_h = main_stream
+        .dict
+        .get(b"Height")
+        .and_then(Object::as_i64)
+        .unwrap();
+    let mask_w = smask_stream
+        .dict
+        .get(b"Width")
+        .and_then(Object::as_i64)
+        .unwrap();
+    let mask_h = smask_stream
+        .dict
+        .get(b"Height")
+        .and_then(Object::as_i64)
+        .unwrap();
 
     assert!(main_w < 1000, "main image should have shrunk, got {main_w}");
-    assert_eq!((main_w, main_h), (mask_w, mask_h), "SMask must track its parent's new size");
+    assert_eq!(
+        (main_w, main_h),
+        (mask_w, mask_h),
+        "SMask must track its parent's new size"
+    );
 }
 
 #[test]
@@ -305,15 +365,19 @@ fn duplicate_images_are_deduplicated() {
         "Resources" => resources,
         "MediaBox" => vec![Object::Real(0.0), Object::Real(0.0), Object::Real(100.0), Object::Real(100.0)],
     });
-    let pages = dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page_id)] };
+    let pages =
+        dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page_id)] };
     doc.objects.insert(pages_id, Object::Dictionary(pages));
-    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) });
+    let catalog_id =
+        doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) });
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    RustEngine.compress(&input, &output, &Level::Lossless.profile()).unwrap();
+    RustEngine
+        .compress(&input, &output, &Level::Lossless.profile())
+        .unwrap();
 
     let reloaded = Document::load(&output).unwrap();
     let image_count = reloaded
@@ -321,7 +385,10 @@ fn duplicate_images_are_deduplicated() {
         .values()
         .filter(|o| matches!(o, Object::Stream(s) if s.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Image".as_slice())))
         .count();
-    assert_eq!(image_count, 1, "identical image streams should have been merged into one object");
+    assert_eq!(
+        image_count, 1,
+        "identical image streams should have been merged into one object"
+    );
 }
 
 #[test]
@@ -332,7 +399,9 @@ fn text_only_pdf_round_trips() {
     save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    let report = RustEngine.compress(&input, &output, &Level::Medium.profile()).unwrap();
+    let report = RustEngine
+        .compress(&input, &output, &Level::Medium.profile())
+        .unwrap();
     assert_eq!(report.images_resampled, 0);
 
     let reloaded = Document::load(&output).unwrap();
@@ -362,8 +431,13 @@ fn encrypted_pdf_is_rejected() {
     save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    let err = RustEngine.compress(&input, &output, &Level::Medium.profile()).unwrap_err();
-    assert!(matches!(err, PdfShrinkError::Encrypted(_)), "expected Encrypted, got {err:?}");
+    let err = RustEngine
+        .compress(&input, &output, &Level::Medium.profile())
+        .unwrap_err();
+    assert!(
+        matches!(err, PdfShrinkError::Encrypted(_)),
+        "expected Encrypted, got {err:?}"
+    );
 }
 
 #[test]
@@ -380,7 +454,10 @@ fn facade_names_output_and_reports_not_smaller_when_nothing_to_gain() {
 
     match compress_file(&input, &opts).unwrap() {
         Outcome::Compressed { output, .. } => {
-            assert_eq!(output.file_name().unwrap().to_str().unwrap(), "report-compressed.pdf");
+            assert_eq!(
+                output.file_name().unwrap().to_str().unwrap(),
+                "report-compressed.pdf"
+            );
         }
         Outcome::NotSmaller => {
             // A trivial text-only PDF may already be as small as lopdf can make

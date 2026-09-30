@@ -8,7 +8,8 @@ use std::process::Command;
 
 const WORKFLOW_TEMPLATE: &str =
     include_str!("../../../packaging/PdfShrinker.workflow/Contents/document.wflow");
-const WORKFLOW_INFO_PLIST: &str = include_str!("../../../packaging/PdfShrinker.workflow/Contents/Info.plist");
+const WORKFLOW_INFO_PLIST: &str =
+    include_str!("../../../packaging/PdfShrinker.workflow/Contents/Info.plist");
 
 /// The executable a Quick Action / CLI symlink should point to: when running
 /// from inside `PdfShrinker.app`, that's the bundled CLI sidecar (which keeps
@@ -43,7 +44,9 @@ pub fn install_quick_action(exec: &Path) -> std::io::Result<PathBuf> {
     std::fs::write(contents_dir.join("Info.plist"), WORKFLOW_INFO_PLIST)?;
 
     // Tell Finder/Services to pick up the new (or updated) service.
-    let _ = Command::new("/System/Library/CoreServices/pbs").arg("-update").output();
+    let _ = Command::new("/System/Library/CoreServices/pbs")
+        .arg("-update")
+        .output();
 
     Ok(bundle_dir)
 }
@@ -58,12 +61,19 @@ pub fn install_cli_symlink(exec: &Path) -> Result<PathBuf, String> {
     if link.exists() || link.is_symlink() {
         std::fs::remove_file(link).map_err(|e| e.to_string())?;
     }
-    std::os::unix::fs::symlink(exec, link)
-        .map_err(|e| format!("{e} (try: sudo ln -sf \"{}\" {})", exec.display(), link.display()))?;
+    std::os::unix::fs::symlink(exec, link).map_err(|e| {
+        format!(
+            "{e} (try: sudo ln -sf \"{}\" {})",
+            exec.display(),
+            link.display()
+        )
+    })?;
 
     Ok(link.to_path_buf())
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }

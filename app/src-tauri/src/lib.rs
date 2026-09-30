@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use pdfshrink_core::{compress_file, CompressOptions, Config, Engine, EngineChoice, GhostscriptEngine, Level, Outcome};
+use pdfshrink_core::{
+    compress_file, CompressOptions, Config, Engine, EngineChoice, GhostscriptEngine, Level, Outcome,
+};
 
 #[derive(Clone, Serialize)]
 struct ConfigDto {
@@ -64,7 +66,8 @@ fn set_default_level(level: String) -> Result<ConfigDto, String> {
 #[tauri::command]
 fn set_default_engine(engine: String) -> Result<ConfigDto, String> {
     let mut cfg = Config::load();
-    cfg.engine = EngineChoice::parse(&engine).ok_or_else(|| format!("moteur inconnu : {engine}"))?;
+    cfg.engine =
+        EngineChoice::parse(&engine).ok_or_else(|| format!("moteur inconnu : {engine}"))?;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(config_dto())
 }
@@ -73,9 +76,15 @@ fn set_default_engine(engine: String) -> Result<ConfigDto, String> {
 /// result is known, so the UI can update incrementally instead of waiting for
 /// the whole batch.
 #[tauri::command]
-fn compress_files(app: tauri::AppHandle, paths: Vec<String>, level: String, engine: String) -> Result<(), String> {
+fn compress_files(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    level: String,
+    engine: String,
+) -> Result<(), String> {
     let level = Level::parse(&level).ok_or_else(|| format!("niveau inconnu : {level}"))?;
-    let engine = EngineChoice::parse(&engine).ok_or_else(|| format!("moteur inconnu : {engine}"))?;
+    let engine =
+        EngineChoice::parse(&engine).ok_or_else(|| format!("moteur inconnu : {engine}"))?;
     let opts = CompressOptions { level, engine };
 
     for path in paths {
@@ -144,7 +153,8 @@ fn install_integrations() -> InstallResult {
     let quick_action = pdfshrink_core::integration::install_quick_action(&exec)
         .map(|p| p.display().to_string())
         .map_err(|e| e.to_string());
-    let cli_link = pdfshrink_core::integration::install_cli_symlink(&exec).map(|p| p.display().to_string());
+    let cli_link =
+        pdfshrink_core::integration::install_cli_symlink(&exec).map(|p| p.display().to_string());
 
     InstallResult {
         quick_action: Some(quick_action),
