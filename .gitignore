@@ -6,3 +6,6 @@
 .DS_Store
 .idea/
 /.mcp.json
+
+# scripts/make-test-pdfs.sh default output
+/test-pdfs/

@@ -35,16 +35,17 @@ On first launch, the **"Install the Quick Action and command-line tool"** button
 ### Command line
 
 ```bash
-pdfshrink file.pdf                          # default level and engine (configurable)
-pdfshrink -l high -e best file.pdf           # explicit level and engine
+pdfshrink file.pdf                          # default level (configurable)
+pdfshrink -l high file.pdf                   # explicit level
 pdfshrink -l medium *.pdf                    # multiple files, in parallel
 pdfshrink config get level                   # read a persisted default
 pdfshrink config set level low               # change a persisted default
 ```
 
-Levels (`-l`): `lossless`, `low`, `medium`, `high`.
-Engines (`-e`): `rust` (built in, always available), `gs` (Ghostscript, if installed via Homebrew),
-`best` (tries both, keeps the smaller one).
+Levels (`-l`): `lossless`, `low`, `medium`, `high`. Experimental, CLI only: `extreme-safe`,
+`extreme`, `extreme-max` (see [`docs/compression-strategies.md`](docs/compression-strategies.md)).
+
+Everything is done by a built-in Rust engine: no external tool (Ghostscript or otherwise) is needed.
 
 Exit codes: `0` success, `1` error, `2` at least one file was already optimal (nothing written for
 it).
@@ -63,9 +64,7 @@ at the app's default level, then shows a macOS notification.
 ## Build
 
 Requirements: Rust (`rustup target add aarch64-apple-darwin`), Xcode Command Line Tools, `cargo-tauri`
-(`cargo install tauri-cli --version "^2"`). Ghostscript is optional, at runtime only
-(`brew install ghostscript`) — never bundled (its AGPL license is incompatible with a closed
-distribution).
+(`cargo install tauri-cli --version "^2"`). No runtime dependency.
 
 ```bash
 # CLI only
@@ -75,7 +74,7 @@ cargo build --release -p pdfshrink-cli
 ./scripts/build-dmg.sh
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the detailed architecture (compression engines, effective-DPI
+See [`CLAUDE.md`](CLAUDE.md) for the detailed architecture (compression engine, effective-DPI
 calculation for images, Tauri app structure, etc.), development commands (`cargo test`,
 `cargo tauri dev`, generating a test PDF…) and the current state of verification.
 

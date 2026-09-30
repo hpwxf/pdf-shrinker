@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-use pdfshrink_core::{Config, EngineChoice, Level, Outcome, compress_file_with};
+use pdfshrink_core::{Config, Level, Outcome, compress_file_with};
 
 #[derive(Parser)]
 #[command(
@@ -25,10 +25,6 @@ struct Cli {
     /// extreme-max. Defaults to the configured default.
     #[arg(short = 'l', long, value_name = "LEVEL")]
     level: Option<String>,
-
-    /// Compression engine: rust, gs or best. Defaults to the configured default.
-    #[arg(short = 'e', long, value_name = "ENGINE")]
-    engine: Option<String>,
 
     /// Also show a macOS notification for each file (used by the Quick Action).
     #[arg(long)]
@@ -68,9 +64,9 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ConfigAction {
-    /// Print a config value (`level` or `engine`).
+    /// Print a config value (`level`).
     Get { key: String },
-    /// Persist a config value (`level` or `engine`).
+    /// Persist a config value (`level`).
     Set { key: String, value: String },
 }
 
@@ -98,9 +94,8 @@ fn run_config(action: &ConfigAction) -> ExitCode {
             let cfg = Config::load();
             match key.as_str() {
                 "level" | "default_level" => println!("{}", cfg.default_level.as_str()),
-                "engine" => println!("{}", cfg.engine.as_str()),
                 other => {
-                    eprintln!("pdfshrink: unknown config key '{other}' (expected: level, engine)");
+                    eprintln!("pdfshrink: unknown config key '{other}' (expected: level)");
                     return ExitCode::from(1);
                 }
             }
@@ -118,15 +113,8 @@ fn run_config(action: &ConfigAction) -> ExitCode {
                         return ExitCode::from(1);
                     }
                 },
-                "engine" => match EngineChoice::parse(value) {
-                    Some(e) => cfg.engine = e,
-                    None => {
-                        eprintln!("pdfshrink: unknown engine '{value}' (expected: rust, gs, best)");
-                        return ExitCode::from(1);
-                    }
-                },
                 other => {
-                    eprintln!("pdfshrink: unknown config key '{other}' (expected: level, engine)");
+                    eprintln!("pdfshrink: unknown config key '{other}' (expected: level)");
                     return ExitCode::from(1);
                 }
             }
@@ -161,16 +149,6 @@ fn run_compress(cli: Cli) -> ExitCode {
         },
         None => defaults.default_level,
     };
-    let engine = match cli.engine.as_deref() {
-        Some(s) => match EngineChoice::parse(s) {
-            Some(e) => e,
-            None => {
-                eprintln!("pdfshrink: unknown engine '{s}' (expected: rust, gs, best)");
-                return ExitCode::from(1);
-            }
-        },
-        None => defaults.engine,
-    };
     let mut profile = level.profile();
     for kv in &cli.tune {
         if let Err(e) = profile.tune(kv) {
@@ -188,12 +166,7 @@ fn run_compress(cli: Cli) -> ExitCode {
     let results: Vec<(PathBuf, pdfshrink_core::Result<Outcome>)> = cli
         .files
         .par_iter()
-        .map(|f| {
-            (
-                f.clone(),
-                compress_file_with(f, &profile, engine, &cli.suffix),
-            )
-        })
+        .map(|f| (f.clone(), compress_file_with(f, &profile, &cli.suffix)))
         .collect();
 
     let mut had_error = false;

@@ -2,19 +2,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
-use crate::engine::{Engine, EngineChoice, Report};
+use crate::engine::{Engine, Report};
 use crate::error::{PdfShrinkError, Result};
-use crate::ghostscript_engine::GhostscriptEngine;
 use crate::level::{Level, Profile};
 use crate::rust_engine::RustEngine;
 
-/// What to compress with. `Default` pulls from the persisted [`Config`], which
+/// How hard to compress. `Default` pulls from the persisted [`Config`], which
 /// is how the CLI, the GUI and the Quick Action all end up agreeing on "the
 /// default level" without talking to each other directly.
 #[derive(Debug, Clone, Copy)]
 pub struct CompressOptions {
     pub level: Level,
-    pub engine: EngineChoice,
 }
 
 impl Default for CompressOptions {
@@ -22,7 +20,6 @@ impl Default for CompressOptions {
         let cfg = Config::load();
         CompressOptions {
             level: cfg.default_level,
-            engine: cfg.engine,
         }
     }
 }
@@ -42,19 +39,14 @@ pub enum Outcome {
 /// overwriting the original, and never overwriting an existing compressed
 /// output — `-compressed-2`, `-compressed-3`, … are used instead).
 pub fn compress_file(input: &Path, opts: &CompressOptions) -> Result<Outcome> {
-    compress_file_with(input, &opts.level.profile(), opts.engine, "compressed")
+    compress_file_with(input, &opts.level.profile(), "compressed")
 }
 
 /// Like [`compress_file`], with an explicit (possibly hand-tuned, see
 /// [`Profile::tune`](crate::Profile::tune)) profile and output suffix
 /// (`<name>-<suffix>.pdf`). Used by the CLI's `--tune`/`--suffix` to try
 /// experimental variants side by side.
-pub fn compress_file_with(
-    input: &Path,
-    profile: &Profile,
-    engine: EngineChoice,
-    suffix: &str,
-) -> Result<Outcome> {
+pub fn compress_file_with(input: &Path, profile: &Profile, suffix: &str) -> Result<Outcome> {
     if !input.is_file() {
         return Err(PdfShrinkError::Io(
             input.to_path_buf(),
@@ -62,28 +54,10 @@ pub fn compress_file_with(
         ));
     }
 
-    let profile = *profile;
-    // Ghostscript's presets always resample images to some degree; route
-    // Lossless through the Rust engine regardless of the caller's choice.
-    let engine_choice = if profile.level == Level::Lossless {
-        EngineChoice::Rust
-    } else {
-        engine
-    };
-
     let output_path = derive_output_path(input, suffix)?;
     let tmp_path = sibling_tmp_path(&output_path, "pdfshrink-tmp");
 
-    let report = match engine_choice {
-        EngineChoice::Rust => RustEngine.compress(input, &tmp_path, &profile)?,
-        EngineChoice::Ghostscript => {
-            if !GhostscriptEngine.is_available() {
-                return Err(PdfShrinkError::GhostscriptNotFound);
-            }
-            GhostscriptEngine.compress(input, &tmp_path, &profile)?
-        }
-        EngineChoice::Best => best_of_both(input, &tmp_path, &profile)?,
-    };
+    let report = RustEngine.compress(input, &tmp_path, profile)?;
 
     if report.output_size >= report.input_size {
         let _ = fs::remove_file(&tmp_path);
@@ -97,36 +71,6 @@ pub fn compress_file_with(
         output: output_path,
         report,
     })
-}
-
-fn best_of_both(input: &Path, tmp_path: &Path, profile: &crate::level::Profile) -> Result<Report> {
-    let rust_result = RustEngine.compress(input, tmp_path, profile);
-
-    if !GhostscriptEngine.is_available() {
-        return rust_result;
-    }
-
-    let gs_tmp = sibling_tmp_path(tmp_path, "pdfshrink-tmp-gs");
-    let gs_result = GhostscriptEngine.compress(input, &gs_tmp, profile);
-
-    match (rust_result, gs_result) {
-        (Ok(rr), Ok(gr)) if gr.output_size < rr.output_size => {
-            let _ = fs::remove_file(tmp_path);
-            fs::rename(&gs_tmp, tmp_path)
-                .map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
-            Ok(gr)
-        }
-        (Ok(rr), _) => {
-            let _ = fs::remove_file(&gs_tmp);
-            Ok(rr)
-        }
-        (Err(_), Ok(gr)) => {
-            fs::rename(&gs_tmp, tmp_path)
-                .map_err(|e| PdfShrinkError::Write(tmp_path.to_path_buf(), e))?;
-            Ok(gr)
-        }
-        (Err(e), Err(_)) => Err(e),
-    }
 }
 
 fn sibling_tmp_path(base: &Path, suffix: &str) -> PathBuf {

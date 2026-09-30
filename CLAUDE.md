@@ -27,6 +27,11 @@ cargo run -p pdfshrink-cli -- install --quick-action --cli-link   # writes to ~/
 # Generate a throwaway test PDF (oversized JPEG on one page) instead of needing a real file
 cargo run -p pdfshrink-core --example make_fixture -- /path/to/out.pdf
 
+# Generate PDFs with image kinds the engine doesn't handle yet (CMYK, JPEG 2000, CCITT, 16-bit)
+# into ./test-pdfs (gitignored); dev-only tools: imagemagick, openjpeg, img2pdf, qpdf, Pillow.
+# See TODO.md for the planned work and the current (untouched) results on these files.
+scripts/make-test-pdfs.sh
+
 # Diagnose a disappointing compression ratio: list every image XObject (id, size, filter,
 # colorspace) and how many exceed 2000px on a side — run on input vs. output to see what
 # actually got touched
@@ -62,23 +67,21 @@ machine) and visually with `pdftoppm -png out.pdf preview`.
 
 `compress_file(input, &CompressOptions) -> Result<Outcome>` (`compress.rs`) is the single entry point
 every front end calls. It picks an output path (`name-compressed.pdf`, `-compressed-2` etc. if taken),
-runs an engine into a same-directory temp file, and only renames it into place if the result is
+runs the engine into a same-directory temp file, and only renames it into place if the result is
 actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
 
 - `level.rs`: `Level` (Lossless/Low/Medium/High) → `Profile` (target DPI, JPEG quality, trigger ratio).
   An image is only touched if its effective on-page DPI exceeds `target_dpi * trigger_ratio`.
-- `engine.rs`: `Engine` trait (`compress(input, output, &Profile) -> Result<Report>`). Two impls:
-  - `rust_engine.rs` (`RustEngine`, always available): `lopdf::Document::load` → `prune_objects` →
+- `engine.rs`: `Engine` trait (`compress(input, output, &Profile) -> Result<Report>`), implemented by
+  `rust_engine.rs` (`RustEngine`) — the only engine. There used to be an optional Ghostscript engine
+  (and a "best of both" mode); it was removed because, on real documents, it never beat the Rust
+  engine at equal quality, rotated some pages (`AutoRotatePages`), and required an external AGPL
+  binary. The app is fully stand-alone. `RustEngine`: `lopdf::Document::load` → `prune_objects` →
     `dedup_streams` (hashes stream bytes, merges byte-identical streams via `doc.traverse_objects`
     reference rewriting, then re-prunes) → `image_ops::resample_images` (skipped entirely for
     Lossless) → `doc.compress()` (Flate any uncompressed stream) → `doc.save_modern()` (xref +
     object streams) → reload and verify the page count didn't change (else the output is discarded
     and `PageCountMismatch` is returned).
-  - `ghostscript_engine.rs` (`GhostscriptEngine`, optional): shells out to a Homebrew-installed `gs`
-    (never bundled — its license is AGPL). Looks on `$PATH` first, then `/opt/homebrew/bin` and
-    `/usr/local/bin`, since an app launched from Finder doesn't inherit a shell's PATH.
-  - `EngineChoice::Best` runs both and keeps whichever output is smaller. Lossless always forces the
-    Rust engine regardless of the caller's choice (Ghostscript's presets always resample images).
 - `placement.rs`: figures out each image XObject's *effective DPI* by walking page (and nested Form
   XObject) content streams, tracking the CTM through `q`/`Q`/`cm`, and measuring the transformed unit
   square at each `Do`. When an image is drawn more than once, the smallest DPI (its most demanding
@@ -128,7 +131,7 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   opaque SMasks dropped, SMasks PNG-predicted, and cropping images to the part inside the page
   (`placement.rs`'s `visible`) via a Form XObject wrapper that takes over the image's id — only when
   the walk was `complete` and every reference to the image came from a walked `/XObject` dict.
-- `config.rs`: `Config` (default level + engine) persisted at
+- `config.rs`: `Config` (default level) persisted at
   `~/Library/Application Support/com.haveneer.pdfshrinker/config.toml`. This is the single source of
   truth the CLI, the app and the Quick Action all read — the app's "set as default" checkbox writing
   here is what makes the (single, level-less) Quick Action follow the app's chosen default.
@@ -141,7 +144,7 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
 
 ### `crates/pdfshrink-cli`
 
-`clap` derive; `pdfshrink [-l LEVEL] [-e ENGINE] [-j N] [--notify] FILES...` plus `config get/set` and
+`clap` derive; `pdfshrink [-l LEVEL] [--tune K=V] [--suffix S] [-j N] [--notify] FILES...` plus `config get/set` and
 `install --quick-action --cli-link` subcommands. Files are compressed in parallel with `rayon`. Exit
 codes: `0` success, `1` any error, `2` any file was already optimal (checked after all files, so a
 mix of outcomes still surfaces the most severe code). `--notify` shells out to `osascript` — used by
@@ -156,7 +159,7 @@ since the very first launch doesn't go through `RunEvent`) and while already run
 static HTML/CSS/JS with **no npm/bundler** — `withGlobalTauri: true` in `tauri.conf.json` exists
 specifically so `app.js` can call `window.__TAURI__.core.invoke(...)` / `.event.listen(...)` directly.
 Rust commands in `app/src-tauri/src/lib.rs` (`compress_files`, `get_config`, `set_default_level`,
-`set_default_engine`, `reveal_in_finder`, `install_integrations`) call straight into `pdfshrink-core`
+`reveal_in_finder`, `install_integrations`) call straight into `pdfshrink-core`
 — the app does not shell out to its own CLI sidecar for compression, only the Quick Action does that.
 `compress_files` emits one `compress-result` event per file as it finishes rather than returning a
 batch, so the file list updates incrementally.

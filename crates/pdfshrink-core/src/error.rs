@@ -21,12 +21,6 @@ pub enum PdfShrinkError {
     #[error("page count changed while compressing {0} ({1} -> {2}); output was discarded")]
     PageCountMismatch(PathBuf, usize, usize),
 
-    #[error("Ghostscript engine requested but `gs` was not found on this system")]
-    GhostscriptNotFound,
-
-    #[error("Ghostscript exited with an error while processing {0}: {1}")]
-    GhostscriptFailed(PathBuf, String),
-
     #[error("config error: {0}")]
     Config(String),
 }

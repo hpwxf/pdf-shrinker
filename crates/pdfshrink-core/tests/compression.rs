@@ -11,8 +11,7 @@ use lopdf::{
 use tempfile::tempdir;
 
 use pdfshrink_core::{
-    CompressOptions, Engine, EngineChoice, Level, Outcome, PdfShrinkError, RustEngine,
-    compress_file,
+    CompressOptions, Engine, Level, Outcome, PdfShrinkError, RustEngine, compress_file,
 };
 
 fn make_jpeg_bytes(w: u32, h: u32, quality: u8) -> Vec<u8> {
@@ -449,7 +448,6 @@ fn facade_names_output_and_reports_not_smaller_when_nothing_to_gain() {
 
     let opts = CompressOptions {
         level: Level::Lossless,
-        engine: EngineChoice::Rust,
     };
 
     match compress_file(&input, &opts).unwrap() {

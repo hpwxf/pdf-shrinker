@@ -8,7 +8,8 @@ app.
 
 ## 1. Common pipeline
 
-Every level goes through the same Rust engine (`rust_engine.rs`), in this order. Steps in
+Every level goes through the same built-in Rust engine (`rust_engine.rs`; there is no external
+tool), in this order. Steps in
 *italics* only run at the `extreme*` levels.
 
 1. **Cleanup**: drop unreachable objects, merge streams that are byte-for-byte identical (same
@@ -378,6 +379,30 @@ duplicates to exploit, so the gains come only from resolution, quality and backg
 Supporting this file required reading iLovePDF's `[/FlateDecode /DCTDecode]` images, which
 pdfshrink previously skipped entirely (0 % gain). That now also benefits any PDF that has been
 through iLovePDF before.
+
+### 4.4 Why there is no Ghostscript engine any more
+
+pdfshrink used to offer an optional engine that shelled out to a Homebrew-installed Ghostscript
+(`-dPDFSETTINGS=/screen`, images at 96 dpi), plus a "best of both" mode keeping the smaller
+output. It was removed after this comparison (SSIM as above, worst page in parentheses):
+
+| Document | Rust `high` | Ghostscript `high` | Rust `extreme` |
+|---|---|---|---|
+| Slide deck rust-1 (103 MB) | 13.6 MB · 0.996 | 16.0 MB · 0.987 (0.896), 73 s | 7.6 MB · 0.995 |
+| LaTeX thesis (34 MB) | 9.0 MB · 0.998 | 5.7 MB · 0.990 (0.797) | 5.8 MB · 0.998 |
+| Scanned exam (8.8 MB) | 2.8 MB · 0.963 | 4.6 MB · 0.912 | 2.3 MB · 0.933 |
+| Business proposal (6.5 MB) | 1.4 MB · 0.998 | 0.54 MB · 0.966 (0.870) | 0.40 MB · 0.997 |
+| O'Reilly book (2.7 MB) | 2.1 MB · 1.000 | 2.7 MB · 0.999 | 1.9 MB · 1.000 |
+| Manual (2.2 MB) | 2.1 MB · 0.990 | 2.1 MB · 0.985 | 2.0 MB · 0.994 |
+| Web page export (5.5 MB) | 0.72 MB · 0.999 | 0.89 MB · 0.996 | 0.56 MB · 0.998 |
+
+Ghostscript was never both smaller and closer to the original than `extreme`. When it beat
+`high` on size, it was at a visible quality cost, which the "best of both" mode (picking the
+smaller file) would silently accept. It also rotated some pages (its default `AutoRotatePages`
+added a `/Rotate` to one slide and two thesis pages), warned about transparency colour spaces,
+and required an external AGPL binary. What it could still do that pdfshrink can't — re-encode
+CMYK, JPEG 2000, JBIG2 or CCITT images, repair broken files — is on the to-do list for the Rust
+engine instead (see `TODO.md`).
 
 ## 5. Known limitations and next steps
 

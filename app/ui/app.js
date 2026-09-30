@@ -2,9 +2,6 @@ const { core, event, dialog } = window.__TAURI__;
 const { t } = window.I18N;
 
 const levelSelect = document.getElementById("level-select");
-const engineSelect = document.getElementById("engine-select");
-const engineOptionGs = document.getElementById("engine-option-gs");
-const engineOptionBest = document.getElementById("engine-option-best");
 const setDefaultCheckbox = document.getElementById("set-default");
 const compressBtn = document.getElementById("compress-btn");
 const clearBtn = document.getElementById("clear-btn");
@@ -18,7 +15,6 @@ const buildInfoTooltip = document.getElementById("build-info-tooltip");
 
 /** path -> { li, detail, render() } */
 const files = new Map();
-let gsAvailable = true;
 let buildInfo = null;
 
 function buildInfoText() {
@@ -137,40 +133,28 @@ function clearFiles() {
   compressBtn.disabled = true;
 }
 
-function updateEngineOptionLabels() {
-  engineOptionGs.textContent = gsAvailable ? t("engine.gs") : t("engine.gsUnavailable");
-  engineOptionGs.disabled = !gsAvailable;
-  engineOptionBest.textContent = gsAvailable ? t("engine.best") : t("engine.bestGsUnavailable");
-}
-
 async function loadConfig() {
   const cfg = await core.invoke("get_config");
   levelSelect.value = cfg.level;
-  engineSelect.value = cfg.engine;
-  gsAvailable = cfg.gs_available;
-  updateEngineOptionLabels();
 }
 
-async function onLevelOrEngineChange() {
+async function onLevelChange() {
   if (!setDefaultCheckbox.checked) return;
   try {
     await core.invoke("set_default_level", { level: levelSelect.value });
-    await core.invoke("set_default_engine", { engine: engineSelect.value });
   } catch (e) {
     console.error(e);
   }
 }
 
-levelSelect.addEventListener("change", onLevelOrEngineChange);
-engineSelect.addEventListener("change", onLevelOrEngineChange);
-setDefaultCheckbox.addEventListener("change", onLevelOrEngineChange);
+levelSelect.addEventListener("change", onLevelChange);
+setDefaultCheckbox.addEventListener("change", onLevelChange);
 
 document.querySelectorAll(".lang-btn").forEach((btn) => {
   btn.addEventListener("click", () => window.I18N.setLocale(btn.dataset.lang));
 });
 
 window.I18N.onChange(() => {
-  updateEngineOptionLabels();
   for (const entry of files.values()) renderFileStatus(entry);
   renderBuildInfo();
 });
@@ -229,7 +213,6 @@ compressBtn.addEventListener("click", async () => {
     await core.invoke("compress_files", {
       paths: [...files.keys()],
       level: levelSelect.value,
-      engine: engineSelect.value,
     });
   } catch (e) {
     console.error(e);
@@ -261,6 +244,5 @@ installBtn.addEventListener("click", async () => {
 });
 
 window.I18N.applyToDom();
-updateEngineOptionLabels();
 loadConfig();
 loadBuildInfo();

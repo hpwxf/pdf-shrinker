@@ -18,7 +18,6 @@ window.I18N = (() => {
       },
       options: {
         level: "Level",
-        engine: "Engine",
         setDefault: "Set as default level",
       },
       level: {
@@ -26,13 +25,6 @@ window.I18N = (() => {
         low: "Low",
         medium: "Medium",
         high: "High",
-      },
-      engine: {
-        rust: "Rust (built in)",
-        gs: "Ghostscript",
-        gsUnavailable: "Ghostscript (not installed)",
-        best: "Best of both",
-        bestGsUnavailable: "Best of both (Ghostscript unavailable)",
       },
       actions: {
         compress: "Compress",
@@ -75,7 +67,6 @@ window.I18N = (() => {
       },
       options: {
         level: "Niveau",
-        engine: "Moteur",
         setDefault: "Définir comme niveau par défaut",
       },
       level: {
@@ -83,13 +74,6 @@ window.I18N = (() => {
         low: "Léger",
         medium: "Moyen",
         high: "Fort",
-      },
-      engine: {
-        rust: "Rust (intégré)",
-        gs: "Ghostscript",
-        gsUnavailable: "Ghostscript (non installé)",
-        best: "Meilleur des deux",
-        bestGsUnavailable: "Meilleur des deux (Ghostscript indisponible)",
       },
       actions: {
         compress: "Compresser",

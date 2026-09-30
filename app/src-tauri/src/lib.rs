@@ -3,23 +3,17 @@ use std::path::PathBuf;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use pdfshrink_core::{
-    compress_file, CompressOptions, Config, Engine, EngineChoice, GhostscriptEngine, Level, Outcome,
-};
+use pdfshrink_core::{compress_file, CompressOptions, Config, Level, Outcome};
 
 #[derive(Clone, Serialize)]
 struct ConfigDto {
     level: String,
-    engine: String,
-    gs_available: bool,
 }
 
 fn config_dto() -> ConfigDto {
     let cfg = Config::load();
     ConfigDto {
         level: cfg.default_level.as_str().to_string(),
-        engine: cfg.engine.as_str().to_string(),
-        gs_available: GhostscriptEngine.is_available(),
     }
 }
 
@@ -63,27 +57,13 @@ fn set_default_level(level: String) -> Result<ConfigDto, String> {
     Ok(config_dto())
 }
 
-#[tauri::command]
-fn set_default_engine(engine: String) -> Result<ConfigDto, String> {
-    let mut cfg = Config::load();
-    cfg.engine = EngineChoice::parse(&engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
-    cfg.save().map_err(|e| e.to_string())?;
-    Ok(config_dto())
-}
-
 /// Compresses each file and emits a `compress-result` event as soon as its
 /// result is known, so the UI can update incrementally instead of waiting for
 /// the whole batch.
 #[tauri::command]
-fn compress_files(
-    app: tauri::AppHandle,
-    paths: Vec<String>,
-    level: String,
-    engine: String,
-) -> Result<(), String> {
+fn compress_files(app: tauri::AppHandle, paths: Vec<String>, level: String) -> Result<(), String> {
     let level = Level::parse(&level).ok_or_else(|| format!("unknown level: {level}"))?;
-    let engine = EngineChoice::parse(&engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
-    let opts = CompressOptions { level, engine };
+    let opts = CompressOptions { level };
 
     for path in paths {
         let input = PathBuf::from(&path);
@@ -185,7 +165,6 @@ pub fn run() {
             get_config,
             get_build_info,
             set_default_level,
-            set_default_engine,
             compress_files,
             reveal_in_finder,
             install_integrations,

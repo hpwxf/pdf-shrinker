@@ -148,7 +148,7 @@ impl Level {
     }
 }
 
-/// Tuning parameters derived from a [`Level`], consumed by the compression engines.
+/// Tuning parameters derived from a [`Level`], consumed by the compression engine.
 #[derive(Debug, Clone, Copy)]
 pub struct Profile {
     pub level: Level,

@@ -10,7 +10,6 @@ mod deep_dedup;
 mod engine;
 mod error;
 mod font_merge;
-mod ghostscript_engine;
 mod image_ops;
 pub mod integration;
 mod level;
@@ -23,9 +22,8 @@ mod zopfli_pass;
 
 pub use compress::{CompressOptions, Outcome, compress_file, compress_file_with};
 pub use config::Config;
-pub use engine::{Engine, EngineChoice, Report};
+pub use engine::{Engine, Report};
 pub use error::{PdfShrinkError, Result};
-pub use ghostscript_engine::GhostscriptEngine;
 pub use level::{Experimental, Level, Profile};
 pub use rust_engine::RustEngine;
 pub use version::{BuildInfo, build_info};
