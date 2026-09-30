@@ -985,7 +985,10 @@ fn one_bit_flate_image_becomes_lossless_ccitt_g4() {
     );
     s.compress().unwrap();
     let before = s.content.len();
-    let (dict, content, _) = compress_single(s, Level::Medium.profile());
+    // A high target resolution, so nothing is downsampled: pure re-encoding.
+    let mut profile = Level::Medium.profile();
+    profile.tune("dpi=1000").unwrap();
+    let (dict, content, _) = compress_single(s, profile);
     assert_eq!(name(&dict, b"Filter"), b"CCITTFaxDecode");
     assert!(content.len() < before, "{} vs {}", content.len(), before);
     assert_eq!(g4_decode(&content, w, h), bits, "G4 must be pixel-exact");
@@ -1003,8 +1006,96 @@ fn stencil_mask_becomes_lossless_ccitt_g4() {
         bits.clone(),
     );
     s.compress().unwrap();
-    let (dict, content, _) = compress_single(s, Level::Medium.profile());
+    let mut profile = Level::Medium.profile();
+    profile.tune("dpi=1000").unwrap();
+    let (dict, content, _) = compress_single(s, profile);
     assert_eq!(name(&dict, b"Filter"), b"CCITTFaxDecode");
     assert!(dict.get(b"ImageMask").unwrap().as_bool().unwrap());
     assert_eq!(g4_decode(&content, w, h), bits);
+}
+
+fn ink_fraction(bits: &[u8], w: u32, h: u32) -> f64 {
+    let row_bytes = (w as usize).div_ceil(8);
+    let mut ink = 0usize;
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            if (bits[y * row_bytes + x / 8] >> (7 - x % 8)) & 1 == 0 {
+                ink += 1;
+            }
+        }
+    }
+    ink as f64 / (w as f64 * h as f64)
+}
+
+#[test]
+fn over_resolved_one_bit_image_is_downsampled_to_twice_the_colour_target() {
+    // 800×600 px stretched over a 100×100 pt page: 576 and 432 dpi, 504 on
+    // average. Medium's colour target is 150 dpi, so bi-level images go to
+    // 300 dpi: 800 * 300 / 504 ≈ 476 px.
+    let (w, h) = (800u32, 600u32);
+    let bits = text_like_bits(w, h);
+    let mut s = Stream::new(
+        image_dict(w, h, Object::Name(b"DeviceGray".to_vec()), 1),
+        bits.clone(),
+    );
+    s.compress().unwrap();
+    let (dict, content, _) = compress_single(s, Level::Medium.profile());
+    assert_eq!(name(&dict, b"Filter"), b"CCITTFaxDecode");
+    let nw = dict.get(b"Width").unwrap().as_i64().unwrap() as u32;
+    let nh = dict.get(b"Height").unwrap().as_i64().unwrap() as u32;
+    assert!((470..=482).contains(&nw), "width {nw}");
+    let small = g4_decode(&content, nw, nh);
+    // Roughly the same amount of ink: strokes neither vanish nor bloat.
+    let (before, after) = (ink_fraction(&bits, w, h), ink_fraction(&small, nw, nh));
+    assert!(
+        (after / before - 1.0).abs() < 0.35,
+        "ink {before:.3} -> {after:.3}"
+    );
+}
+
+#[test]
+fn over_resolved_ccitt_image_is_decoded_and_downsampled() {
+    let (w, h) = (800u32, 600u32);
+    let bits = text_like_bits(w, h);
+    let g4 = {
+        let row_bytes = (w as usize).div_ceil(8);
+        let mut enc = fax::encoder::Encoder::new(fax::VecWriter::new());
+        for y in 0..h as usize {
+            let row = &bits[y * row_bytes..(y + 1) * row_bytes];
+            enc.encode_line(
+                (0..w as usize).map(|x| {
+                    if (row[x / 8] >> (7 - x % 8)) & 1 == 0 {
+                        fax::Color::Black
+                    } else {
+                        fax::Color::White
+                    }
+                }),
+                w,
+            )
+            .unwrap();
+        }
+        enc.finish().unwrap().finish()
+    };
+    let mut d = image_dict(w, h, Object::Name(b"DeviceGray".to_vec()), 1);
+    d.set("Filter", "CCITTFaxDecode");
+    d.set(
+        "DecodeParms",
+        dictionary! { "K" => -1, "Columns" => w as i64, "Rows" => h as i64 },
+    );
+    let (dict, content, _) = compress_single(
+        Stream::new(d, g4).with_compression(false),
+        Level::High.profile(),
+    );
+    // High: colour target 96 dpi, bi-level 192 dpi: 800 * 192 / 504 ≈ 305 px.
+    let nw = dict.get(b"Width").unwrap().as_i64().unwrap() as u32;
+    let nh = dict.get(b"Height").unwrap().as_i64().unwrap() as u32;
+    assert!((300..=310).contains(&nw), "width {nw}");
+    let small = g4_decode(&content, nw, nh);
+    // A ×0.38 reduction of 2 px strokes: they may thicken (strokes thinner
+    // than the new pixel are kept rather than dropped), but not vanish.
+    let (before, after) = (ink_fraction(&bits, w, h), ink_fraction(&small, nw, nh));
+    assert!(
+        after > before * 0.8 && after < before * 1.5,
+        "ink {before:.3} -> {after:.3}"
+    );
 }

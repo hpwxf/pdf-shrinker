@@ -14,12 +14,13 @@ OpenJPEG, img2pdf, qpdf, Pillow). Results with the current engine:
 | `jpx-gray.pdf` | 2400×1600 gray JPEG 2000 | untouched | 189 KB → 47 KB | → 18 KB |
 | `indexed-flate.pdf` | 2400×1600 64-colour palette, Flate | untouched | 899 KB → 76 KB | → 25 KB |
 | `rgb16-flate.pdf` | 2400×1600 16-bit RGB, Flate | untouched | 7.4 MB → 69 KB | → 26 KB |
-| `bilevel-flate.pdf` | 2400×1600 1-bit, Flate | untouched | unchanged¹ | 26 → 24 KB |
-| `ccitt-g4.pdf` | 2400×1600 1-bit CCITT G4 | untouched | untouched | untouched |
+| `bilevel-flate.pdf` | 2400×1600 1-bit, Flate (300 dpi) | untouched | unchanged¹ | 26 → 8.7 KB (192 dpi) |
+| `ccitt-g4.pdf` | 2400×1600 1-bit CCITT G4 (300 dpi) | untouched | unchanged¹ | 30 → 8.6 KB (192 dpi) |
 | `control-rgb-dct.pdf` | RGB JPEG (control) | 1.2 MB → 69 KB | same | → 26 KB |
 
-¹ G4 is tried but isn't smaller than Flate on this image (large flat shapes); on a real
-300 dpi text page G4 wins by ~40 %.
+¹ At `medium` the bi-level target is 300 dpi, so these 300 dpi images keep their resolution;
+lossless G4 re-encoding is tried but isn't smaller on these synthetic images (large flat
+shapes). On a real 300 dpi text page G4 beats Flate by ~40 %.
 
 Rendering checked against the originals with poppler and Ghostscript (colour renders, mean
 per-channel difference in line with the RGB control; no inversion), and covered by integration
@@ -31,13 +32,14 @@ Done:
 - [x] JPEG 2000 decoding (pure-Rust `hayro-jpeg2000`), incl. `/SMaskInData` alpha → `/SMask`.
 - [x] 16-bit images reduced to 8 bits.
 - [x] Palette (`Indexed`) images decoded; lossless palette re-encoding tried.
-- [x] 1-bit raw/Flate images and stencil masks → lossless CCITT G4 when smaller.
+- [x] 1-bit raw/Flate/CCITT G4 images and stencil masks: downsampled to 2× the colour targets
+  when over-resolved, then CCITT G4 when smaller.
 
 Still open:
 - [ ] CMYK → RGB conversion on the experimental levels, for documents only meant for the screen
   (no output intent, no spot colours). Needs a CMS (`lcms2`) or at least the naive formula.
-- [ ] Downsample over-resolved bi-level images (600 dpi scans → 300 dpi) and re-encode CCITT
-  inputs; JBIG2 generic-region encoding would compress better than G4 but is a big job.
+- [ ] JBIG2 generic-region encoding (better than G4, what iLovePDF uses at "extreme"); decoding
+  JBIG2 and CCITT Group 3 inputs.
 - [ ] Lab, Separation/DeviceN, and JPEG 2000 with an explicit palette colour space: still
   untouched.
 

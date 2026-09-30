@@ -406,6 +406,8 @@ enum FilterKind {
     /// as iLovePDF writes them.
     FlateDct,
     Jpx,
+    /// CCITT Group 4 (only taken by the bi-level path).
+    CcittG4,
     RawFlate,
     RawNone,
 }
@@ -416,6 +418,21 @@ fn classify_filter(stream: &Stream) -> Option<FilterKind> {
         Ok(f) if f.is_empty() => Some(FilterKind::RawNone),
         Ok(f) if f.len() == 1 && f[0] == b"DCTDecode" => Some(FilterKind::Dct),
         Ok(f) if f.len() == 1 && f[0] == b"JPXDecode" => Some(FilterKind::Jpx),
+        Ok(f) if f.len() == 1 && f[0] == b"CCITTFaxDecode" => {
+            // Group 4 only (K < 0), without byte-aligned rows.
+            let p = stream
+                .dict
+                .get(b"DecodeParms")
+                .and_then(Object::as_dict)
+                .ok();
+            let k = p
+                .and_then(|p| p.get(b"K").and_then(Object::as_i64).ok())
+                .unwrap_or(0);
+            let aligned = p
+                .and_then(|p| p.get(b"EncodedByteAlign").and_then(Object::as_bool).ok())
+                .unwrap_or(false);
+            (k < 0 && !aligned).then_some(FilterKind::CcittG4)
+        }
         Ok(f) if f.len() == 1 && f[0] == b"FlateDecode" => Some(FilterKind::RawFlate),
         Ok(f) if f.len() == 2 && f[0] == b"FlateDecode" && f[1] == b"DCTDecode" => {
             Some(FilterKind::FlateDct)
@@ -660,6 +677,7 @@ fn decode_pixels(
                 ColorKind::Indexed { .. } => None,
             }
         }
+        FilterKind::CcittG4 => None,
         FilterKind::Jpx => {
             // A /Decode array or an explicit palette colour space would need
             // handling this decoder doesn't do.
@@ -832,13 +850,6 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         return None;
     }
     let filter = classify_filter(stream)?;
-    if let Some(plan) = plan_bilevel(&job, &filter, width, height) {
-        return plan;
-    }
-    // A colour space is required, except for JPEG 2000 (it can carry its own).
-    if job.color.is_none() && !matches!(filter, FilterKind::Jpx) {
-        return None;
-    }
     let placement = job.placement.unwrap_or_else(|| {
         let (pw, ph) = fallback_pt;
         let dpi_x = width as f32 / (pw / 72.0);
@@ -851,6 +862,13 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
             via_dicts: 0,
         }
     });
+    if let Some(plan) = plan_bilevel(&job, &filter, width, height, placement, profile) {
+        return plan;
+    }
+    // A colour space is required, except for JPEG 2000 (it can carry its own).
+    if job.color.is_none() && !matches!(filter, FilterKind::Jpx) {
+        return None;
+    }
     let original_len = stream.content.len();
     // A scanned page: one image spanning (nearly) the full page width.
     let covers_page = job.placement.is_some() && width as f32 >= 0.8 * placement.page_px;
@@ -1080,11 +1098,24 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     })
 }
 
-/// 1-bit images stored raw or Flate-compressed (including stencil masks):
-/// re-encoded losslessly as CCITT Group 4 when that's smaller. Returns
-/// `Some(plan)` when the image is bi-level (whether or not it gained),
-/// `None` to fall through to the general path.
-fn plan_bilevel(job: &Job, filter: &FilterKind, w: u32, h: u32) -> Option<Option<Plan>> {
+/// Bi-level images need about twice the resolution of gray/colour ones to
+/// stay legible (no anti-aliasing), so their targets are scaled by this.
+const BILEVEL_RESOLUTION_FACTOR: f32 = 2.0;
+
+/// 1-bit images (raw, Flate or CCITT G4, stencil masks included):
+/// downsampled when over-resolved — to twice the profile's colour targets —
+/// and re-encoded as CCITT Group 4, if that's smaller. Without
+/// downsampling the re-encoding is lossless. Returns `Some(plan)` when the
+/// image is bi-level (whether or not it gained), `None` to fall through to
+/// the general path.
+fn plan_bilevel(
+    job: &Job,
+    filter: &FilterKind,
+    w: u32,
+    h: u32,
+    placement: Placement,
+    profile: &Profile,
+) -> Option<Option<Plan>> {
     let stream = &job.stream;
     let is_mask = stream
         .dict
@@ -1095,24 +1126,64 @@ fn plan_bilevel(job: &Job, filter: &FilterKind, w: u32, h: u32) -> Option<Option
     if !is_mask && !one_bit_gray {
         return None;
     }
+    let parms = stream
+        .dict
+        .get(b"DecodeParms")
+        .and_then(Object::as_dict)
+        .ok();
     let raw = match filter {
         FilterKind::RawFlate => stream.decompressed_content().ok(),
         FilterKind::RawNone => Some(stream.content.clone()),
-        // CCITT, JBIG2, …: already bi-level codecs.
+        FilterKind::CcittG4 => {
+            let black_is_1 = parms
+                .and_then(|p| p.get(b"BlackIs1").and_then(Object::as_bool).ok())
+                .unwrap_or(false);
+            let columns = parms
+                .and_then(|p| p.get(b"Columns").and_then(Object::as_i64).ok())
+                .unwrap_or(1728);
+            (columns == w as i64)
+                .then(|| image_codecs::decode_g4(&stream.content, w, h, black_is_1))
+                .flatten()
+        }
+        // JBIG2 and others: left alone.
         _ => None,
     };
-    let plan = raw
-        .and_then(|raw| image_codecs::encode_g4(&raw, w, h))
+    let Some(raw) = raw else {
+        return Some(None);
+    };
+
+    let mut bilevel = *profile;
+    bilevel.target_dpi *= BILEVEL_RESOLUTION_FACTOR;
+    bilevel.max_dimension = (bilevel.max_dimension as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
+    bilevel.experimental.page_px =
+        (bilevel.experimental.page_px as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
+    let (new_w, new_h) = target_dims(w, h, placement, &bilevel);
+    let bits = if (new_w, new_h) != (w, h) {
+        // Which sample value paints: 0 unless a /Decode [1 0] inverts it.
+        let inverted = stream
+            .dict
+            .get(b"Decode")
+            .and_then(Object::as_array)
+            .ok()
+            .and_then(|d| d.first().and_then(|v| v.as_i64().ok()))
+            == Some(1);
+        image_codecs::downsample_bilevel(&raw, w, h, new_w, new_h, u8::from(inverted))
+    } else {
+        raw
+    };
+    let plan = image_codecs::encode_g4(&bits, new_w, new_h)
         .filter(|g4| g4.len() < stream.content.len())
         .map(|g4| {
             let mut dict = stream.dict.clone();
             dict.set("Filter", Object::Name(b"CCITTFaxDecode".to_vec()));
             let mut parms = Dictionary::new();
             parms.set("K", -1i64);
-            parms.set("Columns", w as i64);
-            parms.set("Rows", h as i64);
+            parms.set("Columns", new_w as i64);
+            parms.set("Rows", new_h as i64);
             parms.set("BlackIs1", false);
             dict.set("DecodeParms", Object::Dictionary(parms));
+            dict.set("Width", new_w as i64);
+            dict.set("Height", new_h as i64);
             Plan {
                 id: job.id,
                 dict,
@@ -1142,7 +1213,9 @@ fn decode_smask(stream: &Stream) -> Option<GrayImage> {
     let raw = match classify_filter(stream)? {
         FilterKind::RawFlate => stream.decompressed_content().ok()?,
         FilterKind::RawNone => stream.content.clone(),
-        FilterKind::Dct | FilterKind::FlateDct | FilterKind::Jpx => return None,
+        FilterKind::Dct | FilterKind::FlateDct | FilterKind::Jpx | FilterKind::CcittG4 => {
+            return None;
+        }
     };
     if raw.len() as u64 != w as u64 * h as u64 {
         return None;

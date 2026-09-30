@@ -98,9 +98,11 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   (hayro-jpeg2000, mozjpeg CMYK, `fax` CCITT G4). CMYK is re-encoded as CMYK JPEG, never converted:
   an Adobe-marker CMYK JPEG source keeps its stored samples and `/Decode`, any other CMYK source is
   written inverted with `/Decode [1 0 1 0 1 0 1 0]`. A JPX alpha channel with `/SMaskInData` becomes
-  a real `/SMask`. 1-bit raw/Flate images and stencil masks take a separate lossless path
-  (`plan_bilevel`: CCITT G4 if smaller). CCITT/JBIG2, Lab, Separation/DeviceN… are left untouched
-  and counted as skipped. Every eligible image
+  a real `/SMask`. 1-bit raw/Flate/CCITT-G4 images and stencil masks take a separate path
+  (`plan_bilevel`): downsampled to the colour targets × `BILEVEL_RESOLUTION_FACTOR` (2) with an
+  ink-preserving threshold capped at 35 % coverage (`image_codecs::downsample_bilevel`), then CCITT
+  G4 if smaller. JBIG2, CCITT G3, Lab, Separation/DeviceN… are left untouched and counted as
+  skipped. Every eligible image
   is re-encoded as JPEG at the profile's `jpeg_quality` regardless of resolution (a raw/Flate bitmap
   shrinks a lot from that alone); on top of that, it's downsampled (`image::imageops::resize`,
   Lanczos3) if either its placement-derived DPI exceeds `target_dpi * trigger_ratio` *or* its longest

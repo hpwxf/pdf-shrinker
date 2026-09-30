@@ -31,9 +31,9 @@ Eligible images (all lossy levels): gray, RGB and CMYK (device or `ICCBased`), p
 (`Indexed`) and 16-bit images, stored as JPEG (`DCTDecode`, also when wrapped in an extra Flate
 layer as `[/FlateDecode /DCTDecode]`, which is how iLovePDF stores them), JPEG 2000 (`JPXDecode`)
 or raw samples (uncompressed or `FlateDecode`, with or without a PNG predictor); plus 1-bit images
-and stencil masks stored raw or in Flate, which get a lossless CCITT G4 re-encoding (§3.7). Left
-untouched: CCITT and JBIG2 images (already bi-level codecs), Lab, separation/DeviceN and other
-exotic colour spaces.
+and stencil masks stored raw, in Flate or as CCITT Group 4, which take a bi-level path (§3.7).
+Left untouched: JBIG2 and CCITT Group 3 images, Lab, separation/DeviceN and other exotic colour
+spaces.
 
 ## 2. Settings by level
 
@@ -202,10 +202,17 @@ condition keeps screenshots and digitally produced pages out: their background i
   lossless palette re-encoding is always tried, since they can't have more than 256 colours
   unless resized.
 - **16-bit images**: reduced to 8 bits, then the normal path.
-- **1-bit images and stencil masks** stored raw or in Flate: re-encoded losslessly as **CCITT
-  Group 4** (pure-Rust `fax` encoder) when that's smaller. On a real 300 dpi text page, G4 is
-  about 40 % smaller than Flate; on large flat shapes (thresholded photos), Flate can win and the
-  image is left as is. The decoded samples are bit-for-bit identical.
+- **1-bit images and stencil masks** (raw, Flate or CCITT Group 4): downsampled when
+  over-resolved, then encoded as **CCITT Group 4** (pure-Rust `fax` codec) when that's smaller.
+  Bi-level images need about twice the resolution of gray/colour ones to stay legible, so their
+  targets are the level's colour targets × 2: 300 dpi at `medium` (a 300 dpi scan is left at full
+  resolution), 192 dpi at `high`/`extreme`, 144 dpi at `extreme-max`. Downsampling averages ink
+  coverage over each new pixel, then thresholds it: the threshold keeps the source's proportion of
+  ink, but never goes above 35 % coverage, so a stroke thinner than the new pixel is kept (slightly
+  bolder) rather than dropped. Without downsampling, the re-encoding is lossless. On a real 300 dpi
+  black-and-white text page (21.7 KB as libtiff's G4): 20.3 KB at `medium` (lossless), 13.6 KB at
+  192 dpi, 10.3 KB at 144 dpi, all legible. For comparison, iLovePDF goes to 150 dpi CCITT
+  ("recommended") and 72 dpi JBIG2 ("extreme"), the latter barely legible for text.
 
 Test PDFs for all of these: `scripts/make-test-pdfs.sh` (see `TODO.md`).
 
@@ -435,9 +442,10 @@ engine instead (see `TODO.md`).
   identical. That's the remaining font gap with iLovePDF on the thesis (1.18 vs 0.81–0.94 MB).
 - Type 1 → CFF conversion keeps outlines exact but simplifies hints (no hint replacement), which
   could slightly change hinted rendering at very small sizes.
-- Bi-level images are never downsampled, and CCITT/JBIG2 images are left as they are. For scans,
-  a bi-level mode for pages without colour, or a mixed raster content split (sharp text mask +
-  low-resolution colour background), would go much further.
+- JBIG2 (generic region) encoding would compress bi-level images better than CCITT G4; JBIG2 and
+  CCITT Group 3 inputs are left as they are. For colour scans, a bi-level mode for pages without
+  colour, or a mixed raster content split (sharp text mask + low-resolution colour background),
+  would go much further.
 - CMYK images are never converted to RGB, even for documents only meant for the screen.
 - No rewriting of page content or vector figures (number rounding, removal of useless operators),
   which iLovePDF seems to do lightly.
