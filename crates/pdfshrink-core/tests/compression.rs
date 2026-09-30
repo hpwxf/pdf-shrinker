@@ -466,3 +466,233 @@ fn facade_names_output_and_reports_not_smaller_when_nothing_to_gain() {
         }
     }
 }
+
+/// One page drawing every `(name, image)` pair full-page.
+fn build_multi_image_pdf(images: Vec<Stream>) -> (Document, Vec<ObjectId>) {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let ids: Vec<ObjectId> = images.into_iter().map(|s| doc.add_object(s)).collect();
+    let mut ops = Vec::new();
+    let mut xobjects = Dictionary::new();
+    for (i, id) in ids.iter().enumerate() {
+        let name = format!("Im{i}");
+        ops.push(Operation::new("q", vec![]));
+        ops.push(Operation::new(
+            "cm",
+            [100.0, 0.0, 0.0, 100.0, 0.0, 0.0]
+                .into_iter()
+                .map(Object::Real)
+                .collect(),
+        ));
+        ops.push(Operation::new(
+            "Do",
+            vec![Object::Name(name.clone().into_bytes())],
+        ));
+        ops.push(Operation::new("Q", vec![]));
+        xobjects.set(name, Object::Reference(*id));
+    }
+    let content_bytes = Content { operations: ops }.encode().unwrap();
+    let content_id = doc.add_object(Stream::new(Dictionary::new(), content_bytes));
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => Object::Reference(pages_id),
+        "Contents" => Object::Reference(content_id),
+        "Resources" => dictionary! { "XObject" => xobjects },
+        "MediaBox" => vec![Object::Real(0.0), Object::Real(0.0), Object::Real(100.0), Object::Real(100.0)],
+    });
+    let pages =
+        dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page_id)] };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let catalog_id =
+        doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) });
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    (doc, ids)
+}
+
+fn count_images(doc: &Document) -> usize {
+    doc.objects
+        .values()
+        .filter(|o| matches!(o, Object::Stream(s) if s.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Image".as_slice())))
+        .count()
+}
+
+#[test]
+fn extreme_merges_images_identical_after_decoding() {
+    // Same pixels and same soft-mask pixels, but encoded differently (raw vs
+    // Flate) and each pointing at its own mask object: invisible to byte-level
+    // dedup, one image + one mask for the experimental deep dedup.
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("in.pdf");
+    let raw_img = || {
+        let mut s = make_flate_rgb_stream(64, 64);
+        s.decompress().unwrap();
+        s
+    };
+    let (mut doc, ids) = build_multi_image_pdf(vec![make_flate_rgb_stream(64, 64), raw_img()]);
+    for (i, id) in ids.iter().enumerate() {
+        let mut mask = make_gray_smask(64, 64);
+        if i == 1 {
+            mask.decompress().unwrap();
+        }
+        let mask_id = doc.add_object(mask);
+        doc.get_object_mut(*id)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("SMask", Object::Reference(mask_id));
+    }
+    save_and_size(&mut doc, &input);
+    assert_eq!(count_images(&Document::load(&input).unwrap()), 4);
+
+    let output = dir.path().join("out.pdf");
+    let mut profile = Level::ExtremeSafe.profile();
+    profile.tune("zopfli=0").unwrap();
+    RustEngine.compress(&input, &output, &profile).unwrap();
+    assert_eq!(
+        count_images(&Document::load(&output).unwrap()),
+        2,
+        "one image + its mask"
+    );
+}
+
+#[test]
+fn indirect_png_predictor_images_are_recompressed() {
+    // Regression: lopdf ignores an *indirect* /DecodeParms and returns
+    // still-predicted rows, which used to make such images silently skipped.
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("in.pdf");
+    let (w, h) = (400u32, 300u32);
+    let raw: Vec<u8> = (0..w * h)
+        .flat_map(|i| {
+            let (x, y) = (i % w, i / w);
+            [(x ^ y) as u8, (x * 3) as u8, (y * 7 + x) as u8]
+        })
+        .collect();
+    // PNG "None" filter on each row: a filter byte of 0 then the samples.
+    let mut predicted = Vec::new();
+    for row in raw.chunks((w * 3) as usize) {
+        predicted.push(0);
+        predicted.extend_from_slice(row);
+    }
+    let mut stream = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => w as i64,
+            "Height" => h as i64,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+        },
+        predicted,
+    );
+    stream.compress().unwrap();
+    let (mut doc, ids) = build_multi_image_pdf(vec![stream]);
+    let parms_id = doc.add_object(dictionary! {
+        "Predictor" => 15, "Colors" => 3, "Columns" => w as i64, "BitsPerComponent" => 8,
+    });
+    doc.get_object_mut(ids[0])
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("DecodeParms", Object::Reference(parms_id));
+    save_and_size(&mut doc, &input);
+
+    let output = dir.path().join("out.pdf");
+    let report = RustEngine
+        .compress(&input, &output, &Level::Medium.profile())
+        .unwrap();
+    assert_eq!(report.images_resampled, 1);
+    let out = Document::load(&output).unwrap();
+    let img = out.get_object(ids[0]).unwrap().as_stream().unwrap();
+    assert_eq!(
+        img.dict.get(b"Filter").and_then(Object::as_name).unwrap(),
+        b"DCTDecode"
+    );
+}
+
+#[test]
+fn extreme_crops_an_image_hanging_off_the_page() {
+    // 400×400 px image drawn 200×200 pt, shifted so only its top-right quarter
+    // lands on the 100×100 pt page.
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("in.pdf");
+    let (mut doc, img_id) =
+        build_single_image_pdf(make_flate_rgb_stream(400, 400), 100.0, 100.0, 200.0, 200.0);
+    let page_id = doc.get_pages()[&1];
+    let content_id = doc.get_page_contents(page_id)[0];
+    let ops = vec![
+        Operation::new("q", vec![]),
+        Operation::new(
+            "cm",
+            [200.0, 0.0, 0.0, 200.0, -100.0, 0.0]
+                .into_iter()
+                .map(Object::Real)
+                .collect(),
+        ),
+        Operation::new("Do", vec![Object::Name(b"Im0".to_vec())]),
+        Operation::new("Q", vec![]),
+    ];
+    doc.get_object_mut(content_id)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .set_content(Content { operations: ops }.encode().unwrap());
+    save_and_size(&mut doc, &input);
+
+    let output = dir.path().join("out.pdf");
+    let mut profile = Level::ExtremeSafe.profile();
+    profile.tune("zopfli=0").unwrap();
+    profile.tune("crop=1").unwrap();
+    RustEngine.compress(&input, &output, &profile).unwrap();
+
+    let out = Document::load(&output).unwrap();
+    let wrapper = out.get_object(img_id).unwrap().as_stream().unwrap();
+    assert_eq!(
+        wrapper
+            .dict
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .unwrap(),
+        b"Form"
+    );
+    let inner_id = out
+        .get_dict_in_dict(&wrapper.dict, b"Resources")
+        .and_then(|r| out.get_dict_in_dict(r, b"XObject"))
+        .and_then(|x| x.get(b"I"))
+        .and_then(Object::as_reference)
+        .unwrap();
+    let inner = out.get_object(inner_id).unwrap().as_stream().unwrap();
+    let w = inner.dict.get(b"Width").and_then(Object::as_i64).unwrap();
+    let h = inner.dict.get(b"Height").and_then(Object::as_i64).unwrap();
+    // Right half horizontally (+2 px margin), top half vertically (+2 px margin).
+    assert_eq!((w, h), (202, 202));
+}
+
+#[test]
+fn crop_is_skipped_when_the_image_is_also_used_elsewhere() {
+    // Same geometry as above, but the image is also referenced from an
+    // unwalked place (here: a page-level /Thumb), so it must stay whole.
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("in.pdf");
+    let (mut doc, img_id) =
+        build_single_image_pdf(make_flate_rgb_stream(400, 400), 100.0, 100.0, 400.0, 400.0);
+    let page_id = doc.get_pages()[&1];
+    doc.get_dictionary_mut(page_id)
+        .unwrap()
+        .set("Thumb", Object::Reference(img_id));
+    save_and_size(&mut doc, &input);
+
+    let output = dir.path().join("out.pdf");
+    let mut profile = Level::ExtremeSafe.profile();
+    profile.tune("zopfli=0").unwrap();
+    profile.tune("crop=1").unwrap();
+    RustEngine.compress(&input, &output, &profile).unwrap();
+    let out = Document::load(&output).unwrap();
+    let img = out.get_object(img_id).unwrap().as_stream().unwrap();
+    assert_eq!(
+        img.dict.get(b"Subtype").and_then(Object::as_name).unwrap(),
+        b"Image"
+    );
+}

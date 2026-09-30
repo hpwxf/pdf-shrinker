@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::engine::{Engine, EngineChoice, Report};
 use crate::error::{PdfShrinkError, Result};
 use crate::ghostscript_engine::GhostscriptEngine;
-use crate::level::Level;
+use crate::level::{Level, Profile};
 use crate::rust_engine::RustEngine;
 
 /// What to compress with. `Default` pulls from the persisted [`Config`], which
@@ -42,6 +42,19 @@ pub enum Outcome {
 /// overwriting the original, and never overwriting an existing compressed
 /// output — `-compressed-2`, `-compressed-3`, … are used instead).
 pub fn compress_file(input: &Path, opts: &CompressOptions) -> Result<Outcome> {
+    compress_file_with(input, &opts.level.profile(), opts.engine, "compressed")
+}
+
+/// Like [`compress_file`], with an explicit (possibly hand-tuned, see
+/// [`Profile::tune`](crate::Profile::tune)) profile and output suffix
+/// (`<name>-<suffix>.pdf`). Used by the CLI's `--tune`/`--suffix` to try
+/// experimental variants side by side.
+pub fn compress_file_with(
+    input: &Path,
+    profile: &Profile,
+    engine: EngineChoice,
+    suffix: &str,
+) -> Result<Outcome> {
     if !input.is_file() {
         return Err(PdfShrinkError::Io(
             input.to_path_buf(),
@@ -49,16 +62,16 @@ pub fn compress_file(input: &Path, opts: &CompressOptions) -> Result<Outcome> {
         ));
     }
 
-    let profile = opts.level.profile();
+    let profile = *profile;
     // Ghostscript's presets always resample images to some degree; route
     // Lossless through the Rust engine regardless of the caller's choice.
-    let engine_choice = if opts.level == Level::Lossless {
+    let engine_choice = if profile.level == Level::Lossless {
         EngineChoice::Rust
     } else {
-        opts.engine
+        engine
     };
 
-    let output_path = derive_output_path(input)?;
+    let output_path = derive_output_path(input, suffix)?;
     let tmp_path = sibling_tmp_path(&output_path, "pdfshrink-tmp");
 
     let report = match engine_choice {
@@ -127,7 +140,7 @@ fn sibling_tmp_path(base: &Path, suffix: &str) -> PathBuf {
     base.with_file_name(name)
 }
 
-fn derive_output_path(input: &Path) -> Result<PathBuf> {
+fn derive_output_path(input: &Path, suffix: &str) -> Result<PathBuf> {
     let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
         PdfShrinkError::Io(
             input.to_path_buf(),
@@ -140,10 +153,10 @@ fn derive_output_path(input: &Path) -> Result<PathBuf> {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
 
-    let mut candidate = parent.join(format!("{stem}-compressed.{ext}"));
+    let mut candidate = parent.join(format!("{stem}-{suffix}.{ext}"));
     let mut n = 2;
     while candidate.exists() {
-        candidate = parent.join(format!("{stem}-compressed-{n}.{ext}"));
+        candidate = parent.join(format!("{stem}-{suffix}-{n}.{ext}"));
         n += 1;
     }
     Ok(candidate)

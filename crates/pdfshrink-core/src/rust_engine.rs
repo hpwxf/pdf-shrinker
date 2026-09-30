@@ -11,6 +11,7 @@ use crate::engine::{Engine, Report};
 use crate::image_ops;
 use crate::level::Profile;
 use crate::{PdfShrinkError, Result};
+use crate::{deep_dedup, font_merge, type1_cff, type1_merge, zopfli_pass};
 
 /// Pure-Rust compression engine: structural cleanup (dead-object pruning, stream
 /// dedup, Flate recompression) plus, when the profile asks for it, image
@@ -36,18 +37,48 @@ impl Engine for RustEngine {
 
         let original_pages = doc.get_pages().len();
 
+        let x = &profile.experimental;
+        let mut phase = PhaseLog::new();
+
         doc.prune_objects();
         dedup_streams(&mut doc);
+        phase.done("prune+dedup");
+        if x.deep_dedup {
+            let n = deep_dedup::deep_dedup(&mut doc);
+            phase.done(&format!("deep dedup ({n} merged)"));
+        }
+        if x.merge_fonts {
+            let n = font_merge::merge_truetype_subsets(&mut doc)
+                + type1_merge::merge_type1_subsets(&mut doc);
+            phase.done(&format!("font merge ({n} programs merged)"));
+        }
+        if x.cff {
+            let n = type1_cff::convert_type1_to_cff(&mut doc);
+            phase.done(&format!("Type 1 → CFF ({n} programs converted)"));
+        }
 
         let (images_resampled, images_skipped) = if profile.resample_images {
             image_ops::resample_images(&mut doc, profile)
         } else {
             (0, 0)
         };
+        phase.done(&format!(
+            "images ({images_resampled} re-encoded, {images_skipped} skipped)"
+        ));
+        if x.deep_dedup {
+            // Identical inputs re-encode to identical outputs: catch pairs that
+            // differed only in encoding before resampling.
+            let n = deep_dedup::deep_dedup(&mut doc);
+            phase.done(&format!("deep dedup ({n} merged)"));
+        }
 
         // Flate-compress any stream that isn't compressed yet (fonts, content
         // streams, …). A no-op for streams that already have a /Filter.
         doc.compress();
+        if x.zopfli {
+            let saved = zopfli_pass::rezopfli_streams(&mut doc);
+            phase.done(&format!("zopfli ({saved} bytes saved)"));
+        }
 
         {
             let file =
@@ -79,6 +110,28 @@ impl Engine for RustEngine {
             images_resampled,
             images_skipped,
         })
+    }
+}
+
+/// Per-phase timings on stderr when `PDFSHRINK_DEBUG` is set.
+struct PhaseLog {
+    enabled: bool,
+    last: std::time::Instant,
+}
+
+impl PhaseLog {
+    fn new() -> Self {
+        PhaseLog {
+            enabled: std::env::var_os("PDFSHRINK_DEBUG").is_some(),
+            last: std::time::Instant::now(),
+        }
+    }
+
+    fn done(&mut self, what: &str) {
+        if self.enabled {
+            eprintln!("  [{:>6.1}s] {what}", self.last.elapsed().as_secs_f32());
+        }
+        self.last = std::time::Instant::now();
     }
 }
 

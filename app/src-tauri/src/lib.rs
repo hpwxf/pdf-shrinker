@@ -58,7 +58,7 @@ fn get_build_info() -> BuildInfoDto {
 #[tauri::command]
 fn set_default_level(level: String) -> Result<ConfigDto, String> {
     let mut cfg = Config::load();
-    cfg.default_level = Level::parse(&level).ok_or_else(|| format!("niveau inconnu : {level}"))?;
+    cfg.default_level = Level::parse(&level).ok_or_else(|| format!("unknown level: {level}"))?;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(config_dto())
 }
@@ -66,8 +66,7 @@ fn set_default_level(level: String) -> Result<ConfigDto, String> {
 #[tauri::command]
 fn set_default_engine(engine: String) -> Result<ConfigDto, String> {
     let mut cfg = Config::load();
-    cfg.engine =
-        EngineChoice::parse(&engine).ok_or_else(|| format!("moteur inconnu : {engine}"))?;
+    cfg.engine = EngineChoice::parse(&engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(config_dto())
 }
@@ -82,9 +81,8 @@ fn compress_files(
     level: String,
     engine: String,
 ) -> Result<(), String> {
-    let level = Level::parse(&level).ok_or_else(|| format!("niveau inconnu : {level}"))?;
-    let engine =
-        EngineChoice::parse(&engine).ok_or_else(|| format!("moteur inconnu : {engine}"))?;
+    let level = Level::parse(&level).ok_or_else(|| format!("unknown level: {level}"))?;
+    let engine = EngineChoice::parse(&engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
     let opts = CompressOptions { level, engine };
 
     for path in paths {

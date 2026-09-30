@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-use pdfshrink_core::{CompressOptions, Config, EngineChoice, Level, Outcome, compress_file};
+use pdfshrink_core::{Config, EngineChoice, Level, Outcome, compress_file_with};
 
 #[derive(Parser)]
 #[command(
@@ -21,7 +21,8 @@ struct Cli {
     /// PDF files to compress.
     files: Vec<PathBuf>,
 
-    /// Compression level: lossless, low, medium or high. Defaults to the configured default.
+    /// Compression level: lossless, low, medium or high; experimental: extreme-safe, extreme,
+    /// extreme-max. Defaults to the configured default.
     #[arg(short = 'l', long, value_name = "LEVEL")]
     level: Option<String>,
 
@@ -32,6 +33,15 @@ struct Cli {
     /// Also show a macOS notification for each file (used by the Quick Action).
     #[arg(long)]
     notify: bool,
+
+    /// Override one profile parameter (repeatable), e.g. `--tune page_px=1800 --tune ssim=0.97`.
+    /// For experimenting with variants; see `pdfshrink-core`'s `Profile::tune` for the keys.
+    #[arg(long, value_name = "KEY=VALUE")]
+    tune: Vec<String>,
+
+    /// Output file suffix: writes `<name>-<SUFFIX>.pdf` (default: `compressed`).
+    #[arg(long, value_name = "SUFFIX", default_value = "compressed")]
+    suffix: String,
 
     /// Number of files to compress in parallel (defaults to the number of CPUs).
     #[arg(short = 'j', long, value_name = "N")]
@@ -103,7 +113,7 @@ fn run_config(action: &ConfigAction) -> ExitCode {
                     Some(l) => cfg.default_level = l,
                     None => {
                         eprintln!(
-                            "pdfshrink: unknown level '{value}' (expected: lossless, low, medium, high)"
+                            "pdfshrink: unknown level '{value}' (expected: lossless, low, medium, high, or experimental: extreme-safe, extreme, extreme-max)"
                         );
                         return ExitCode::from(1);
                     }
@@ -143,7 +153,9 @@ fn run_compress(cli: Cli) -> ExitCode {
         Some(s) => match Level::parse(s) {
             Some(l) => l,
             None => {
-                eprintln!("pdfshrink: unknown level '{s}' (expected: lossless, low, medium, high)");
+                eprintln!(
+                    "pdfshrink: unknown level '{s}' (expected: lossless, low, medium, high, or experimental: extreme-safe, extreme, extreme-max)"
+                );
                 return ExitCode::from(1);
             }
         },
@@ -159,7 +171,13 @@ fn run_compress(cli: Cli) -> ExitCode {
         },
         None => defaults.engine,
     };
-    let opts = CompressOptions { level, engine };
+    let mut profile = level.profile();
+    for kv in &cli.tune {
+        if let Err(e) = profile.tune(kv) {
+            eprintln!("pdfshrink: --tune {e}");
+            return ExitCode::from(1);
+        }
+    }
 
     if let Some(jobs) = cli.jobs {
         let _ = rayon::ThreadPoolBuilder::new()
@@ -170,7 +188,12 @@ fn run_compress(cli: Cli) -> ExitCode {
     let results: Vec<(PathBuf, pdfshrink_core::Result<Outcome>)> = cli
         .files
         .par_iter()
-        .map(|f| (f.clone(), compress_file(f, &opts)))
+        .map(|f| {
+            (
+                f.clone(),
+                compress_file_with(f, &profile, engine, &cli.suffix),
+            )
+        })
         .collect();
 
     let mut had_error = false;
@@ -199,14 +222,14 @@ fn run_compress(cli: Cli) -> ExitCode {
                 had_not_smaller = true;
                 println!("{}: already optimal, nothing written", file.display());
                 if cli.notify {
-                    notify(&format!("{}: déjà optimal", file_name(file)));
+                    notify(&format!("{}: already optimal", file_name(file)));
                 }
             }
             Err(e) => {
                 had_error = true;
                 eprintln!("{}: {e}", file.display());
                 if cli.notify {
-                    notify(&format!("{}: échec — {e}", file_name(file)));
+                    notify(&format!("{}: failed — {e}", file_name(file)));
                 }
             }
         }
@@ -222,7 +245,7 @@ fn run_compress(cli: Cli) -> ExitCode {
 }
 
 fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["o", "Ko", "Mo", "Go", "To"];
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit = 0usize;
     while size >= 1024.0 && unit < UNITS.len() - 1 {
@@ -239,7 +262,7 @@ fn human_size(bytes: u64) -> String {
 fn file_name(p: &Path) -> String {
     p.file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("fichier")
+        .unwrap_or("file")
         .to_string()
 }
 

@@ -24,3 +24,5 @@ rayon = "1"
 anyhow = "1"
 thiserror = "2"
 tempfile = "3"
+flate2 = "1"
+zopfli = { version = "0.8", default-features = false, features = ["std", "zlib"] }

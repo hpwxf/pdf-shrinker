@@ -44,7 +44,7 @@ fn pdfsettings_for(level: Level) -> &'static str {
         // is the closest, least-lossy preset if this is ever called anyway.
         Level::Lossless | Level::Low => "/printer",
         Level::Medium => "/ebook",
-        Level::High => "/screen",
+        Level::High | Level::ExtremeSafe | Level::Extreme | Level::ExtremeMax => "/screen",
     }
 }
 
@@ -79,7 +79,10 @@ impl Engine for GhostscriptEngine {
             "-dSAFER",
         ]);
         cmd.arg(format!("-dPDFSETTINGS={}", pdfsettings_for(profile.level)));
-        if profile.level == Level::High {
+        if matches!(
+            profile.level,
+            Level::High | Level::ExtremeSafe | Level::Extreme | Level::ExtremeMax
+        ) {
             cmd.args([
                 "-dColorImageResolution=96",
                 "-dGrayImageResolution=96",

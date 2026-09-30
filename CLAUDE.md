@@ -31,6 +31,15 @@ cargo run -p pdfshrink-core --example make_fixture -- /path/to/out.pdf
 # colorspace) and how many exceed 2000px on a side — run on input vs. output to see what
 # actually got touched
 cargo run --release -p pdfshrink-core --example inspect_images -- file.pdf
+# Where do the bytes go (images/smasks/fonts/content…), how many images are duplicates once
+# decoded; per-font embedded programs (spots un-merged per-page font subsets)
+cargo run --release -p pdfshrink-core --example analyze -- file.pdf
+cargo run --release -p pdfshrink-core --example fonts -- file.pdf
+
+# Experimental levels (CLI only, not offered by the app): extreme-safe, extreme, extreme-max.
+# --tune overrides one profile knob (repeatable), --suffix names the output <name>-<suffix>.pdf,
+# PDFSHRINK_DEBUG=1 prints per-phase timings and the JPEG quality search
+cargo run --release -p pdfshrink-cli -- -l extreme --tune page_px=1800 --suffix x1800 file.pdf
 
 # App: dev loop, build .app (needs the CLI sidecar staged first — see below)
 cd app && cargo tauri dev
@@ -74,12 +83,14 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   XObject) content streams, tracking the CTM through `q`/`Q`/`cm`, and measuring the transformed unit
   square at each `Do`. When an image is drawn more than once, the smallest DPI (its most demanding
   placement) wins. Images the walk never reaches fall back to the document's largest page size
-  (conservative — least likely to trigger unwanted resampling). This CTM-based size is not reliable
+  (conservative — least likely to trigger unwanted resampling). The walk's op budget is per page.
+  Images are planned in parallel (rayon) from cloned streams, then applied sequentially. lopdf only
+  honours a *direct* `/DecodeParms` dict, so `image_ops` inlines indirect ones before decoding. This CTM-based size is not reliable
   for an image drawn oversized and then clipped to the visible page area (a common "full-bleed
   background" export from slide tools) — it overstates the on-page footprint and so understates the
   DPI, which `image_ops.rs`'s `max_dimension` cap exists specifically to catch.
-- `image_ops.rs`: only touches image kinds that round-trip safely — `DCTDecode` (JPEG) and raw
-  8-bit-per-component DeviceGray/DeviceRGB (uncompressed or single-`FlateDecode`), including
+- `image_ops.rs`: only touches image kinds that round-trip safely — `DCTDecode` (JPEG, also when
+  wrapped as `[/FlateDecode /DCTDecode]`, as iLovePDF writes them) and raw 8-bit-per-component DeviceGray/DeviceRGB (uncompressed or single-`FlateDecode`), including
   `ICCBased` colorspaces resolved via their stream's `/N`. Everything else (JBIG2, JPX, CCITT,
   indexed, CMYK, image masks, 16-bit…) is left untouched and counted as skipped. Every eligible image
   is re-encoded as JPEG at the profile's `jpeg_quality` regardless of resolution (a raw/Flate bitmap
@@ -95,6 +106,28 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   `pdfshrink-core` alone, not in each front end — `env!()` only resolves within the crate that writes
   the env var, but a plain function call works across crates, so the CLI (`--version`) and the app
   (footer "ⓘ" tooltip) both just call it instead of each needing their own `build.rs`.
+- Experimental `Extreme*` levels (`Level::EXPERIMENTAL`, deliberately not in `Level::ALL` so the
+  GUI doesn't list them) switch on the `Experimental` knobs in `level.rs`; regular levels use
+  `Experimental::OFF`. Passes: `deep_dedup.rs` (merge objects equal once *decoded*, dictionary minus
+  encoding keys, iterated to a fixpoint — two images become equal once their SMasks merged);
+  `font_merge.rs` (union the per-page subsets of one `CIDFontType2`/Identity TrueType font —
+  subsetters keep original GIDs — into one program, only when glyph data/hinting agree);
+  `type1_merge.rs` (same for Type 1 `/FontFile` subsets — LaTeX figures each carry their own CMR10…:
+  eexec-decrypt, union glyphs by name and `Subrs` by index, `return`-stub Subrs count as absent,
+  compare decrypted charstrings, re-encrypt); `type1_cff.rs` (then converts every Type 1 program to
+  CFF `/FontFile3` `/Subtype /Type1C`: charstrings interpreted to absolute outlines — subrs
+  expanded, flex → curves, seac kept — and re-encoded as Type 2, built-in encoding preserved, stems
+  merged into one non-overlapping set, hint replacement dropped; standard strings in
+  `cff_tables.rs`, generated from fontTools); `zopfli_pass.rs` (re-deflate non-image Flate streams);
+  and in `image_ops.rs`: page-relative resolution cap (`page_px`, pixels across the page's
+  *displayed width* — DPI is meaningless for 1920×1080 pt slide pages), JPEG quality chosen per
+  image by binary search on SSIM (luma, with the worst RGB channel + 0.03 as a chroma guard),
+  scanned pages (an image spanning the page width, mostly light non-pure-white paper) get a fixed
+  mid-range quality instead of the SSIM search and, with `scan_whiten`, a levels stretch mapping
+  the paper tone to white, near-gray RGB → gray, ≤256-colour images kept lossless as `Indexed` + PNG predictor,
+  opaque SMasks dropped, SMasks PNG-predicted, and cropping images to the part inside the page
+  (`placement.rs`'s `visible`) via a Form XObject wrapper that takes over the image's id — only when
+  the walk was `complete` and every reference to the image came from a walked `/XObject` dict.
 - `config.rs`: `Config` (default level + engine) persisted at
   `~/Library/Application Support/com.haveneer.pdfshrinker/config.toml`. This is the single source of
   truth the CLI, the app and the Quick Action all read — the app's "set as default" checkbox writing
