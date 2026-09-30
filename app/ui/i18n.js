@@ -10,7 +10,7 @@ window.I18N = (() => {
   const translations = {
     en: {
       app: {
-        subtitle: "Compress PDFs while keeping them PDFs.",
+        subtitle: "Smaller is better — and still beautiful.",
       },
       drop: {
         hint: "Drag PDFs here, or",
@@ -37,15 +37,19 @@ window.I18N = (() => {
         extremeMax: "Smallest file: 72 dpi, lower quality. Visibly degraded when zoomed in.",
       },
       actions: {
-        compress: "Compress",
+        compress: "Compress all",
         clear: "Clear list",
       },
       file: {
-        pending: "pending",
-        compressing: "compressing…",
-        notSmaller: "already optimal, nothing to do",
+        run: "Compress this file",
+        rerun: "Compress again at the selected level",
+        retry: "Try again",
+        queued: "Waiting",
+        running: "compressing…",
+        notSmaller: "already optimal",
         failed: "failed",
         reveal: "Show in Finder",
+        remove: "Remove from the list",
       },
       install: {
         button: "Install the Quick Action and command-line tool…",
@@ -69,7 +73,7 @@ window.I18N = (() => {
     },
     fr: {
       app: {
-        subtitle: "Compresse des PDF en restant des PDF.",
+        subtitle: "Plus léger, et toujours aussi beau.",
       },
       drop: {
         hint: "Glissez des PDF ici, ou",
@@ -96,15 +100,19 @@ window.I18N = (() => {
         extremeMax: "Fichier le plus petit : 72 dpi, qualité réduite. Dégradation visible en zoomant.",
       },
       actions: {
-        compress: "Compresser",
+        compress: "Tout compresser",
         clear: "Effacer la liste",
       },
       file: {
-        pending: "en attente",
-        compressing: "compression…",
-        notSmaller: "déjà optimal, rien à faire",
+        run: "Compresser ce fichier",
+        rerun: "Recompresser au niveau choisi",
+        retry: "Réessayer",
+        queued: "En attente",
+        running: "compression…",
+        notSmaller: "déjà optimal",
         failed: "échec",
         reveal: "Afficher dans le Finder",
+        remove: "Retirer de la liste",
       },
       install: {
         button: "Installer l'Action rapide et l'outil en ligne de commande…",

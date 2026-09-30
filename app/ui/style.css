@@ -93,10 +93,13 @@ header h1 {
 }
 
 .drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   border: 1.5px dashed var(--border);
   border-radius: 10px;
-  padding: 18px;
-  text-align: center;
+  padding: 10px;
   color: var(--muted);
 }
 
@@ -107,7 +110,7 @@ header h1 {
 }
 
 .drop-zone p {
-  margin: 0 0 8px;
+  margin: 0;
 }
 
 .options {
@@ -192,15 +195,17 @@ button.link {
   border-top: 1px solid var(--border);
 }
 
-.file-list li {
+.file-row {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 4px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
   border-bottom: 1px solid var(--border);
 }
 
 .file-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -208,27 +213,88 @@ button.link {
 }
 
 .file-detail {
+  flex: 0 0 auto;
+  max-width: 60%;
   color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-.file-detail.ok {
+.file-row.compressed .file-detail {
   color: var(--ok);
 }
 
-.file-detail.err {
+.file-row.error .file-detail {
   color: var(--err);
 }
 
-.reveal-link {
-  background: none;
-  border: none;
-  color: var(--accent);
+/* Round status button at the start of each row: run (pending), queued,
+   running (spinner), done / already optimal (click to redo), error (retry). */
+.status-btn,
+.icon-btn {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  font-weight: 400;
-  text-decoration: underline;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.status-btn:not(:disabled):hover,
+.icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.status-btn:disabled {
+  opacity: 1;
+}
+
+.file-row.pending .status-btn {
+  color: var(--accent);
+}
+
+.file-row.running .status-btn svg {
+  color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+.file-row.compressed .status-btn {
+  color: var(--ok);
+}
+
+.file-row.error .status-btn {
+  color: var(--err);
+}
+
+.icon-btn {
+  border: none;
+  background: none;
+}
+
+.remove-btn:hover {
+  color: var(--err);
+}
+
+.remove-btn:disabled {
+  opacity: 0.3;
+  color: var(--muted);
+}
+
+.icon-btn[hidden] {
+  display: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 footer {

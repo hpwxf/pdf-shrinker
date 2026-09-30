@@ -13,9 +13,9 @@
         "label": "main",
         "title": "PdfShrinker",
         "width": 480,
-        "height": 460,
+        "height": 560,
         "minWidth": 420,
-        "minHeight": 360,
+        "minHeight": 440,
         "resizable": true,
         "fullscreen": false,
         "dragDropEnabled": true

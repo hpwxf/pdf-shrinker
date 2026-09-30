@@ -171,8 +171,11 @@ specifically so `app.js` can call `window.__TAURI__.core.invoke(...)` / `.event.
 Rust commands in `app/src-tauri/src/lib.rs` (`compress_files`, `get_config`, `set_default_level`,
 `reveal_in_finder`, `install_integrations`) call straight into `pdfshrink-core`
 — the app does not shell out to its own CLI sidecar for compression, only the Quick Action does that.
-`compress_files` emits one `compress-result` event per file as it finishes rather than returning a
-batch, so the file list updates incrementally.
+`compress_files` is `async` and runs the batch in `spawn_blocking` (a sync command would run on the
+main thread and freeze the webview — no repaint, no scrolling); it emits `compress-started` then
+`compress-result` per file rather than returning a batch, so each one-line row in the file list
+shows pending → queued → running → done/error as it happens. "Compress all" runs every pending or
+failed file; a row's status button (re)runs just that file.
 
 ### `packaging/PdfShrinker.workflow` — the Quick Action template
 

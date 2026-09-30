@@ -81,30 +81,97 @@ function fileName(path) {
   return path.split("/").pop() || path;
 }
 
-/** Renders a file's current status in the active language from its last known state. */
+const ICONS = {
+  run: '<path d="M5.5 3.5v9l7-4.5z" fill="currentColor"/>',
+  queued:
+    '<circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+    '<path d="M8 5v3.2l2 1.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  running:
+    '<path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  done: '<path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  same: '<path d="M4 6.5h8M4 9.5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  error:
+    '<circle cx="8" cy="8" r="6" fill="currentColor"/>' +
+    '<path d="M8 4.8v3.8" stroke="white" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.2" r="1" fill="white"/>',
+  reveal:
+    '<circle cx="7" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+    '<path d="M10 10l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  remove:
+    '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5M7 7v4M9 7v4" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+};
+
+function icon(name) {
+  return `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${ICONS[name]}</svg>`;
+}
+
+/** Status kind -> [icon, whether the status button (re)runs the file, its tooltip key]. */
+const STATUS = {
+  pending: ["run", true, "file.run"],
+  queued: ["queued", false, "file.queued"],
+  running: ["running", false, "file.running"],
+  compressed: ["done", true, "file.rerun"],
+  not_smaller: ["same", true, "file.rerun"],
+  error: ["error", true, "file.retry"],
+};
+
+/** Files "Compress all" picks up: never run yet, or failed. */
+const RUNNABLE = new Set(["pending", "error"]);
+
+/** Renders a file's row (one line) in the active language from its last known state. */
 function renderFileStatus(entry) {
-  entry.detail.innerHTML = "";
   const s = entry.state;
-  if (s.kind === "pending") {
-    entry.detail.className = "file-detail";
-    entry.detail.textContent = t("file.pending");
-  } else if (s.kind === "compressing") {
-    entry.detail.className = "file-detail";
-    entry.detail.textContent = t("file.compressing");
-  } else if (s.kind === "compressed") {
-    entry.detail.className = "file-detail ok";
-    entry.detail.textContent = `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)}  (-${s.pct} %)  `;
-    const reveal = document.createElement("button");
-    reveal.className = "reveal-link";
-    reveal.textContent = t("file.reveal");
-    reveal.addEventListener("click", () => core.invoke("reveal_in_finder", { path: s.output }));
-    entry.detail.append(reveal);
+  const [iconName, runnable, tip] = STATUS[s.kind];
+  entry.li.className = `file-row ${s.kind}`;
+  entry.statusBtn.innerHTML = icon(iconName);
+  entry.statusBtn.disabled = !runnable;
+  entry.statusBtn.title = t(tip);
+
+  entry.detail.title = "";
+  entry.reveal.hidden = s.kind !== "compressed";
+  if (s.kind === "compressed") {
+    entry.detail.textContent = `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)} · −${s.pct} %`;
   } else if (s.kind === "not_smaller") {
-    entry.detail.className = "file-detail";
     entry.detail.textContent = t("file.notSmaller");
   } else if (s.kind === "error") {
-    entry.detail.className = "file-detail err";
     entry.detail.textContent = s.message || t("file.failed");
+    entry.detail.title = s.message || "";
+  } else if (s.kind === "running") {
+    entry.detail.textContent = t("file.running");
+  } else {
+    entry.detail.textContent = "";
+  }
+  entry.reveal.title = t("file.reveal");
+  // Removing a queued/running file wouldn't stop its compression: wait for it.
+  const busy = s.kind === "queued" || s.kind === "running";
+  entry.remove.disabled = busy;
+  entry.remove.title = t("file.remove");
+}
+
+function updateCompressAll() {
+  compressBtn.disabled = ![...files.values()].some((e) => RUNNABLE.has(e.state.kind));
+}
+
+function setState(entry, state) {
+  entry.state = state;
+  renderFileStatus(entry);
+  updateCompressAll();
+}
+
+/** Compresses `paths` (in order, one at a time) at the selected level. */
+async function run(paths) {
+  paths = paths.filter((p) => files.has(p));
+  if (paths.length === 0) return;
+  for (const p of paths) setState(files.get(p), { kind: "queued" });
+  try {
+    await core.invoke("compress_files", { paths, level: levelSelect.value });
+  } catch (e) {
+    for (const p of paths) {
+      const entry = files.get(p);
+      if (entry && (entry.state.kind === "queued" || entry.state.kind === "running")) {
+        setState(entry, { kind: "error", message: String(e) });
+      }
+    }
   }
 }
 
@@ -113,25 +180,48 @@ function addFiles(paths) {
     if (files.has(path) || !path.toLowerCase().endsWith(".pdf")) continue;
 
     const li = document.createElement("li");
-    const name = document.createElement("div");
+    const statusBtn = document.createElement("button");
+    statusBtn.className = "status-btn";
+    statusBtn.addEventListener("click", () => run([path]));
+    const name = document.createElement("span");
     name.className = "file-name";
     name.textContent = fileName(path);
-    const detail = document.createElement("div");
+    name.title = path;
+    const detail = document.createElement("span");
     detail.className = "file-detail";
-    li.append(name, detail);
+    const reveal = document.createElement("button");
+    reveal.className = "icon-btn";
+    reveal.innerHTML = icon("reveal");
+    reveal.addEventListener("click", () => {
+      const s = files.get(path)?.state;
+      if (s?.output) core.invoke("reveal_in_finder", { path: s.output });
+    });
+    const remove = document.createElement("button");
+    remove.className = "icon-btn remove-btn";
+    remove.innerHTML = icon("remove");
+    remove.addEventListener("click", () => removeFile(path));
+    li.append(statusBtn, name, detail, reveal, remove);
     fileList.append(li);
 
-    const entry = { li, detail, state: { kind: "pending" } };
+    const entry = { li, statusBtn, detail, reveal, remove, state: { kind: "pending" } };
     files.set(path, entry);
     renderFileStatus(entry);
   }
-  compressBtn.disabled = files.size === 0;
+  updateCompressAll();
+}
+
+function removeFile(path) {
+  const entry = files.get(path);
+  if (!entry) return;
+  entry.li.remove();
+  files.delete(path);
+  updateCompressAll();
 }
 
 function clearFiles() {
   files.clear();
   fileList.innerHTML = "";
-  compressBtn.disabled = true;
+  updateCompressAll();
 }
 
 /** "extreme-max" -> "extremeMax", the i18n key naming convention. */
@@ -200,6 +290,11 @@ event.listen("tauri://drag-drop", (e) => {
 
 event.listen("opened-files", (e) => addFiles(e.payload ?? []));
 
+event.listen("compress-started", (e) => {
+  const entry = files.get(e.payload);
+  if (entry) setState(entry, { kind: "running" });
+});
+
 event.listen("compress-result", (e) => {
   const r = e.payload;
   const entry = files.get(r.input);
@@ -207,32 +302,17 @@ event.listen("compress-result", (e) => {
 
   if (r.status === "compressed") {
     const pct = r.input_size > 0 ? Math.round((1 - r.output_size / r.input_size) * 100) : 0;
-    entry.state = { kind: "compressed", inputSize: r.input_size, outputSize: r.output_size, pct, output: r.output };
+    setState(entry, { kind: "compressed", inputSize: r.input_size, outputSize: r.output_size, pct, output: r.output });
   } else if (r.status === "not_smaller") {
-    entry.state = { kind: "not_smaller" };
+    setState(entry, { kind: "not_smaller" });
   } else {
-    entry.state = { kind: "error", message: r.message };
+    setState(entry, { kind: "error", message: r.message });
   }
-  renderFileStatus(entry);
 });
 
-compressBtn.addEventListener("click", async () => {
-  compressBtn.disabled = true;
-  for (const entry of files.values()) {
-    entry.state = { kind: "compressing" };
-    renderFileStatus(entry);
-  }
-  try {
-    await core.invoke("compress_files", {
-      paths: [...files.keys()],
-      level: levelSelect.value,
-    });
-  } catch (e) {
-    console.error(e);
-  } finally {
-    compressBtn.disabled = files.size === 0;
-  }
-});
+compressBtn.addEventListener("click", () =>
+  run([...files].filter(([, e]) => RUNNABLE.has(e.state.kind)).map(([p]) => p))
+);
 
 installBtn.addEventListener("click", async () => {
   installBtn.disabled = true;

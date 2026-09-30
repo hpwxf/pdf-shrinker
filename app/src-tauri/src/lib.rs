@@ -57,46 +57,52 @@ fn set_default_level(level: String) -> Result<ConfigDto, String> {
     Ok(config_dto())
 }
 
-/// Compresses each file and emits a `compress-result` event as soon as its
-/// result is known, so the UI can update incrementally instead of waiting for
-/// the whole batch.
+/// Compresses each file in turn, emitting `compress-started` when one begins
+/// and `compress-result` as soon as its result is known, so the UI can update
+/// incrementally instead of waiting for the whole batch.
+///
+/// `async` + `spawn_blocking`: a plain (sync) command runs on the main thread,
+/// which would freeze the webview (no repaint, no scrolling) for the whole
+/// batch.
 #[tauri::command]
-fn compress_files(app: tauri::AppHandle, paths: Vec<String>, level: String) -> Result<(), String> {
+async fn compress_files(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    level: String,
+) -> Result<(), String> {
     let level = Level::parse(&level).ok_or_else(|| format!("unknown level: {level}"))?;
     let opts = CompressOptions { level };
 
-    for path in paths {
-        let input = PathBuf::from(&path);
-        let result = match compress_file(&input, &opts) {
-            Ok(Outcome::Compressed { output, report }) => CompressResult {
-                input: path.clone(),
-                status: "compressed",
-                output: Some(output.display().to_string()),
-                input_size: Some(report.input_size),
-                output_size: Some(report.output_size),
-                message: None,
-            },
-            Ok(Outcome::NotSmaller) => CompressResult {
-                input: path.clone(),
-                status: "not_smaller",
-                output: None,
-                input_size: None,
-                output_size: None,
-                message: None,
-            },
-            Err(e) => CompressResult {
-                input: path.clone(),
-                status: "error",
-                output: None,
-                input_size: None,
-                output_size: None,
-                message: Some(e.to_string()),
-            },
-        };
-        let _ = app.emit("compress-result", &result);
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        for path in paths {
+            let _ = app.emit("compress-started", &path);
+            let result = compress_one(path, &opts);
+            let _ = app.emit("compress-result", &result);
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
 
-    Ok(())
+fn compress_one(path: String, opts: &CompressOptions) -> CompressResult {
+    let empty = |status, message| CompressResult {
+        input: path.clone(),
+        status,
+        output: None,
+        input_size: None,
+        output_size: None,
+        message,
+    };
+    match compress_file(&PathBuf::from(&path), opts) {
+        Ok(Outcome::Compressed { output, report }) => CompressResult {
+            output: Some(output.display().to_string()),
+            input_size: Some(report.input_size),
+            output_size: Some(report.output_size),
+            ..empty("compressed", None)
+        },
+        Ok(Outcome::NotSmaller) => empty("not_smaller", None),
+        Err(e) => empty("error", Some(e.to_string())),
+    }
 }
 
 #[tauri::command]
