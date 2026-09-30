@@ -12,7 +12,7 @@ use pdfshrink_core::{Config, Level, Outcome, compress_file_with};
 #[command(
     name = "pdfshrink",
     version,
-    about = "Compress PDFs while keeping them PDFs."
+    about = "Smaller is better — and still beautiful."
 )]
 struct Cli {
     #[command(subcommand)]

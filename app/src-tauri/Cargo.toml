@@ -1,7 +1,7 @@
 [package]
 name = "pdfshrinker-app"
 version = "0.1.0"
-description = "Compress PDFs while keeping them PDFs."
+description = "Smaller is better — and still beautiful."
 authors = ["Pascal Havé <contact@haveneer.com>"]
 license = "MIT"
 edition = "2021"
