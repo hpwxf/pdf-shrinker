@@ -27,11 +27,13 @@ tool), in this order. Steps in
 7. **Write** as a modern PDF 1.5 (object streams + compressed xref table), reload, and check that
    the page count is unchanged. The file is only kept if it is smaller than the original.
 
-Eligible images: JPEG (`DCTDecode`, also when wrapped in an extra Flate layer as
-`[/FlateDecode /DCTDecode]`, which is how iLovePDF stores them) and raw 8-bit gray/RGB images
-(including 1- or 3-component `ICCBased` profiles), uncompressed or `FlateDecode`, with or without
-a PNG predictor. Everything else (JBIG2, JPEG 2000, CCITT, CMYK, already-indexed images, 1-bit
-masks, 16-bit…) is left untouched.
+Eligible images (all lossy levels): gray, RGB and CMYK (device or `ICCBased`), palette
+(`Indexed`) and 16-bit images, stored as JPEG (`DCTDecode`, also when wrapped in an extra Flate
+layer as `[/FlateDecode /DCTDecode]`, which is how iLovePDF stores them), JPEG 2000 (`JPXDecode`)
+or raw samples (uncompressed or `FlateDecode`, with or without a PNG predictor); plus 1-bit images
+and stencil masks stored raw or in Flate, which get a lossless CCITT G4 re-encoding (§3.7). Left
+untouched: CCITT and JBIG2 images (already bi-level codecs), Lab, separation/DeviceN and other
+exotic colour spaces.
 
 ## 2. Settings by level
 
@@ -183,6 +185,29 @@ condition keeps screenshots and digitally produced pages out: their background i
   (its median minus 20) to white. JPEG then stops spending bits on paper grain and shading: about
   25 % smaller at equal quality on a 150 dpi scan. Linear rather than a threshold, so faint pencil
   strokes get lighter but never vanish. Colours are kept (headings, red corrections).
+
+### 3.7 Other image kinds
+
+- **CMYK** (print PDFs): re-encoded **as a CMYK JPEG**, with the usual downsampling and quality
+  logic; colours are not converted to RGB, so print workflows stay valid. A CMYK JPEG source with
+  an Adobe marker keeps its stored samples and its `/Decode` array, so it renders exactly as the
+  original did in every viewer. Any other CMYK source (raw, Flate, JPEG 2000) is written the way
+  Photoshop and img2pdf do: samples inverted, `/Decode [1 0 1 0 1 0 1 0]`. The colour space
+  (`DeviceCMYK` or its ICC profile) is kept. The SSIM search uses the mean of the four channels,
+  with the worst channel as a guard.
+- **JPEG 2000**: decoded with a pure-Rust decoder (`hayro-jpeg2000`), then re-encoded as JPEG (or
+  palette) with the usual logic. An alpha channel inside the codestream (`/SMaskInData`) becomes a
+  real `/SMask`.
+- **Palette images** (`Indexed`): decoded through their lookup table, then the normal path; a
+  lossless palette re-encoding is always tried, since they can't have more than 256 colours
+  unless resized.
+- **16-bit images**: reduced to 8 bits, then the normal path.
+- **1-bit images and stencil masks** stored raw or in Flate: re-encoded losslessly as **CCITT
+  Group 4** (pure-Rust `fax` encoder) when that's smaller. On a real 300 dpi text page, G4 is
+  about 40 % smaller than Flate; on large flat shapes (thresholded photos), Flate can win and the
+  image is left as is. The decoded samples are bit-for-bit identical.
+
+Test PDFs for all of these: `scripts/make-test-pdfs.sh` (see `TODO.md`).
 
 ## 4. Comparison with iLovePDF
 
@@ -410,10 +435,10 @@ engine instead (see `TODO.md`).
   identical. That's the remaining font gap with iLovePDF on the thesis (1.18 vs 0.81–0.94 MB).
 - Type 1 → CFF conversion keeps outlines exact but simplifies hints (no hint replacement), which
   could slightly change hinted rendering at very small sizes.
-- CMYK, JPEG 2000, JBIG2, CCITT and 16-bit images are not processed (common in print PDFs and
-  black-and-white scans). For scans, a bi-level (JBIG2/CCITT) mode for pages without colour, or a
-  mixed raster content split (sharp text mask + low-resolution colour background), would go much
-  further.
+- Bi-level images are never downsampled, and CCITT/JBIG2 images are left as they are. For scans,
+  a bi-level mode for pages without colour, or a mixed raster content split (sharp text mask +
+  low-resolution colour background), would go much further.
+- CMYK images are never converted to RGB, even for documents only meant for the screen.
 - No rewriting of page content or vector figures (number rounding, removal of useless operators),
   which iLovePDF seems to do lightly.
 - Transparency masks are always lossless: a JPEG mode for "soft" masks (shadows, gradients) could

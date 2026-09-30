@@ -1,61 +1,45 @@
 # TODO
 
-## Image kinds the engine leaves untouched
+## Image kinds: status
 
-Generate test PDFs for all of these with `scripts/make-test-pdfs.sh [OUT_DIR]` (dev-only tools:
-ImageMagick, OpenJPEG, img2pdf, qpdf, Pillow). Current behaviour on its output: only the control
-page (8-bit RGB JPEG) shrinks; every other image comes out unchanged.
+Test PDFs for every case: `scripts/make-test-pdfs.sh [OUT_DIR]` (dev-only tools: ImageMagick,
+OpenJPEG, img2pdf, qpdf, Pillow). Results with the current engine:
 
-| File | Image | `medium` today | `extreme` today |
-|---|---|---|---|
-| `cmyk-dct.pdf` | 2400×1600 CMYK JPEG (Adobe, inverted) | 2.9 MB → 2.9 MB | same |
-| `cmyk-flate.pdf` | 2400×1600 DeviceCMYK, Flate | 9.1 MB → 9.1 MB | same |
-| `jpx-rgb.pdf` | 2400×1600 RGB JPEG 2000 | 564 KB → 563 KB | same |
-| `jpx-gray.pdf` | 2400×1600 gray JPEG 2000 | 189 KB → 188 KB | same |
-| `ccitt-g4.pdf` | 2400×1600 1-bit CCITT G4 | 32 KB → 31 KB | same |
-| `rgb16-flate.pdf` | 2400×1600 16-bit RGB, Flate | 7.4 MB → 7.4 MB | same |
-| `control-rgb-dct.pdf` | 2400×1600 RGB JPEG (control) | 1.2 MB → 69 KB | 1.2 MB → 26 KB |
-| `all-kinds.pdf` | all of the above, one per page | | |
+| File | Image | before | `medium` | `extreme` |
+|---|---|---|---|---|
+| `cmyk-dct.pdf` | 2400×1600 CMYK JPEG (Adobe, inverted) | untouched | 2.9 MB → 286 KB | → 99 KB |
+| `cmyk-icc-dct.pdf` | same, ICC profile (`ICCBased`, N=4) | untouched | 2.8 MB → 326 KB | → 137 KB |
+| `cmyk-flate.pdf` | 2400×1600 DeviceCMYK, Flate | untouched | 9.1 MB → 184 KB | → 67 KB |
+| `jpx-rgb.pdf` | 2400×1600 RGB JPEG 2000 | untouched | 564 KB → 65 KB | → 25 KB |
+| `jpx-gray.pdf` | 2400×1600 gray JPEG 2000 | untouched | 189 KB → 47 KB | → 18 KB |
+| `indexed-flate.pdf` | 2400×1600 64-colour palette, Flate | untouched | 899 KB → 76 KB | → 25 KB |
+| `rgb16-flate.pdf` | 2400×1600 16-bit RGB, Flate | untouched | 7.4 MB → 69 KB | → 26 KB |
+| `bilevel-flate.pdf` | 2400×1600 1-bit, Flate | untouched | unchanged¹ | 26 → 24 KB |
+| `ccitt-g4.pdf` | 2400×1600 1-bit CCITT G4 | untouched | untouched | untouched |
+| `control-rgb-dct.pdf` | RGB JPEG (control) | 1.2 MB → 69 KB | same | → 26 KB |
 
-### CMYK (priority)
+¹ G4 is tried but isn't smaller than Flate on this image (large flat shapes); on a real
+300 dpi text page G4 wins by ~40 %.
 
-Common in print-ready PDFs (InDesign, Illustrator exports, magazines, brochures).
+Rendering checked against the originals with poppler and Ghostscript (colour renders, mean
+per-channel difference in line with the RGB control; no inversion), and covered by integration
+tests (`tests/compression.rs`).
 
-- [ ] Decode `DeviceCMYK` and `ICCBased` with `/N 4`, raw/Flate and JPEG. CMYK JPEGs written with
-  an Adobe APP14 marker are inverted: honour the `/Decode [1 0 1 0 1 0 1 0]` array (img2pdf and
-  Photoshop both produce such files).
-- [ ] Re-encode **as CMYK JPEG** (mozjpeg supports `JCS_CMYK`) with the usual downsampling and
-  quality logic, keeping the colour space: converting to RGB would change colours and break
-  print workflows. The SSIM search needs a CMYK-aware comparison (per channel, or after a naive
-  conversion to RGB for the metric only).
-- [ ] Optional, experimental levels only: convert to RGB when the document is clearly meant for the
-  screen (no output intent, no spot colours), for the extra size gain. Needs a CMYK → RGB
-  conversion (naive formula, or the embedded ICC profile via a CMS such as `lcms2`).
-- [ ] Tests: synthesize CMYK raw/Flate and CMYK JPEG images in-test (mozjpeg can write CMYK), as
-  the existing tests do for RGB.
+Done:
+- [x] CMYK (Device and ICC), raw/Flate and JPEG, re-encoded as CMYK JPEG; Adobe `/Decode`
+  convention handled.
+- [x] JPEG 2000 decoding (pure-Rust `hayro-jpeg2000`), incl. `/SMaskInData` alpha → `/SMask`.
+- [x] 16-bit images reduced to 8 bits.
+- [x] Palette (`Indexed`) images decoded; lossless palette re-encoding tried.
+- [x] 1-bit raw/Flate images and stencil masks → lossless CCITT G4 when smaller.
 
-### JPEG 2000 (`JPXDecode`)
-
-Found in scans from some copiers, archival PDFs (PDF/A), and some Acrobat "optimize" outputs.
-
-- [ ] Add a JPEG 2000 decoder. Options: the pure-Rust `hayro-jpeg2000` decoder, or OpenJPEG through
-  bindings (`jpeg2k`, `openjpeg-sys`), which adds a C dependency. Must be sandboxed like the
-  mozjpeg encoder (`catch_unwind`), since JPX decoders see hostile input.
-- [ ] Handle the colour space coming from inside the codestream when the image dictionary has no
-  `/ColorSpace`, and `/SMaskInData` (alpha embedded in the JPX, to be split into a PDF `/SMask`).
-- [ ] Re-encode as JPEG (or palette / lossless when that's smaller), with the usual resampling.
-  Keep the original when the JPX is already smaller: modern JPX is efficient, so the gain comes
-  mostly from downsampling.
-- [ ] Tests: decoding needs real JPX bytes. Either a dev-dependency encoder used in-test, or a tiny
-  codestream (a few hundred bytes) produced once by `opj_compress` and embedded in the test
-  source as a byte array.
-
-### Also untouched, lower priority
-
-- [ ] 16-bit images: reduce to 8 bits, then the normal path.
-- [ ] Bi-level images (CCITT G3/G4, JBIG2, 1-bit Flate): downsample, or re-encode 1-bit Flate as
-  CCITT G4 (JBIG2 generic region encoding would compress better but is a big job).
-- [ ] Already-indexed (palette) images: currently skipped entirely.
+Still open:
+- [ ] CMYK → RGB conversion on the experimental levels, for documents only meant for the screen
+  (no output intent, no spot colours). Needs a CMS (`lcms2`) or at least the naive formula.
+- [ ] Downsample over-resolved bi-level images (600 dpi scans → 300 dpi) and re-encode CCITT
+  inputs; JBIG2 generic-region encoding would compress better than G4 but is a big job.
+- [ ] Lab, Separation/DeviceN, and JPEG 2000 with an explicit palette colour space: still
+  untouched.
 
 ## Other ideas (see `docs/compression-strategies.md` §5)
 

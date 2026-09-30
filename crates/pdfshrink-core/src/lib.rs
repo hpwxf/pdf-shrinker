@@ -10,6 +10,7 @@ mod deep_dedup;
 mod engine;
 mod error;
 mod font_merge;
+mod image_codecs;
 mod image_ops;
 pub mod integration;
 mod level;

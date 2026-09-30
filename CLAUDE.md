@@ -27,9 +27,9 @@ cargo run -p pdfshrink-cli -- install --quick-action --cli-link   # writes to ~/
 # Generate a throwaway test PDF (oversized JPEG on one page) instead of needing a real file
 cargo run -p pdfshrink-core --example make_fixture -- /path/to/out.pdf
 
-# Generate PDFs with image kinds the engine doesn't handle yet (CMYK, JPEG 2000, CCITT, 16-bit)
+# Generate PDFs covering every image kind (CMYK, JPEG 2000, CCITT, 1-bit, 16-bit, indexed…)
 # into ./test-pdfs (gitignored); dev-only tools: imagemagick, openjpeg, img2pdf, qpdf, Pillow.
-# See TODO.md for the planned work and the current (untouched) results on these files.
+# See TODO.md for the results on these files.
 scripts/make-test-pdfs.sh
 
 # Diagnose a disappointing compression ratio: list every image XObject (id, size, filter,
@@ -92,10 +92,15 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   for an image drawn oversized and then clipped to the visible page area (a common "full-bleed
   background" export from slide tools) — it overstates the on-page footprint and so understates the
   DPI, which `image_ops.rs`'s `max_dimension` cap exists specifically to catch.
-- `image_ops.rs`: only touches image kinds that round-trip safely — `DCTDecode` (JPEG, also when
-  wrapped as `[/FlateDecode /DCTDecode]`, as iLovePDF writes them) and raw 8-bit-per-component DeviceGray/DeviceRGB (uncompressed or single-`FlateDecode`), including
-  `ICCBased` colorspaces resolved via their stream's `/N`. Everything else (JBIG2, JPX, CCITT,
-  indexed, CMYK, image masks, 16-bit…) is left untouched and counted as skipped. Every eligible image
+- `image_ops.rs`: decodes gray/RGB/CMYK (device or `ICCBased` via the ICC stream's `/N`), `Indexed`
+  and 16-bit images stored as `DCTDecode` (also wrapped as `[/FlateDecode /DCTDecode]`, as iLovePDF
+  writes them), `JPXDecode` or raw/`FlateDecode` samples; codecs live in `image_codecs.rs`
+  (hayro-jpeg2000, mozjpeg CMYK, `fax` CCITT G4). CMYK is re-encoded as CMYK JPEG, never converted:
+  an Adobe-marker CMYK JPEG source keeps its stored samples and `/Decode`, any other CMYK source is
+  written inverted with `/Decode [1 0 1 0 1 0 1 0]`. A JPX alpha channel with `/SMaskInData` becomes
+  a real `/SMask`. 1-bit raw/Flate images and stencil masks take a separate lossless path
+  (`plan_bilevel`: CCITT G4 if smaller). CCITT/JBIG2, Lab, Separation/DeviceN… are left untouched
+  and counted as skipped. Every eligible image
   is re-encoded as JPEG at the profile's `jpeg_quality` regardless of resolution (a raw/Flate bitmap
   shrinks a lot from that alone); on top of that, it's downsampled (`image::imageops::resize`,
   Lanczos3) if either its placement-derived DPI exceeds `target_dpi * trigger_ratio` *or* its longest

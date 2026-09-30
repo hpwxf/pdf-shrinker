@@ -32,6 +32,7 @@ use image::{GrayImage, RgbImage};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, StringFormat};
 use rayon::prelude::*;
 
+use crate::image_codecs;
 use crate::level::{Experimental, Profile};
 use crate::placement::{self, Placement};
 
@@ -117,6 +118,7 @@ pub fn resample_images(doc: &mut Document, profile: &Profile) -> (usize, usize) 
     // Soft masks can be shared by several images (after dedup); resize each
     // once, to the largest size any of its parents asked for.
     let mut smask_updates: HashMap<ObjectId, SmaskUpdate> = HashMap::new();
+    let mut new_smasks: Vec<(ObjectId, SmaskUpdate)> = Vec::new();
     for plan in plans {
         let target = match plan.crop {
             None => plan.id,
@@ -147,6 +149,17 @@ pub fn resample_images(doc: &mut Document, profile: &Profile) -> (usize, usize) 
                     *e = u;
                 }
             }
+            SmaskAction::Create(u) => new_smasks.push((target, u)),
+        }
+    }
+    for (image_id, u) in new_smasks {
+        let mut dict = Dictionary::new();
+        dict.set("Type", Object::Name(b"XObject".to_vec()));
+        dict.set("Subtype", Object::Name(b"Image".to_vec()));
+        let mask_id = doc.add_object(Stream::new(dict, Vec::new()));
+        smask_updates.insert(mask_id, SmaskUpdate { id: mask_id, ..u });
+        if let Some(Object::Stream(s)) = doc.objects.get_mut(&image_id) {
+            s.dict.set("SMask", Object::Reference(mask_id));
         }
     }
     for (id, u) in smask_updates {
@@ -292,6 +305,8 @@ enum SmaskAction {
     Keep,
     Drop,
     Replace(SmaskUpdate),
+    /// New soft mask (from a JPEG 2000's own alpha); `id` is unused.
+    Create(SmaskUpdate),
 }
 
 #[derive(Clone)]
@@ -304,19 +319,15 @@ struct SmaskUpdate {
     decode_parms: Option<Object>,
 }
 
+/// Image XObjects, stencil masks included (those only ever take the
+/// lossless bi-level path).
 fn is_candidate_image(stream: &Stream) -> bool {
-    let is_image = stream
+    stream
         .dict
         .get(b"Subtype")
         .and_then(Object::as_name)
         .map(|n| n == b"Image")
-        .unwrap_or(false);
-    let is_mask = stream
-        .dict
-        .get(b"ImageMask")
-        .and_then(Object::as_bool)
-        .unwrap_or(false);
-    is_image && !is_mask
+        .unwrap_or(false)
 }
 
 fn collect_smask_ids(doc: &Document) -> HashSet<ObjectId> {
@@ -358,10 +369,35 @@ fn num(o: &Object) -> Result<f32, ()> {
         .map_err(|_| ())
 }
 
-#[derive(Clone, Copy)]
+/// Colour spaces the engine can decode.
+#[derive(Clone)]
 enum ColorKind {
     Gray,
     Rgb,
+    Cmyk,
+    /// `[/Indexed base hival lookup]`: `lut` holds `hival + 1` entries of
+    /// `base`'s component count.
+    Indexed {
+        base: Base,
+        lut: Vec<u8>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Base {
+    Gray,
+    Rgb,
+    Cmyk,
+}
+
+impl Base {
+    fn channels(self) -> usize {
+        match self {
+            Base::Gray => 1,
+            Base::Rgb => 3,
+            Base::Cmyk => 4,
+        }
+    }
 }
 
 enum FilterKind {
@@ -369,6 +405,7 @@ enum FilterKind {
     /// JPEG wrapped in an extra Flate layer (`[/FlateDecode /DCTDecode]`),
     /// as iLovePDF writes them.
     FlateDct,
+    Jpx,
     RawFlate,
     RawNone,
 }
@@ -378,6 +415,7 @@ fn classify_filter(stream: &Stream) -> Option<FilterKind> {
         Err(_) => Some(FilterKind::RawNone),
         Ok(f) if f.is_empty() => Some(FilterKind::RawNone),
         Ok(f) if f.len() == 1 && f[0] == b"DCTDecode" => Some(FilterKind::Dct),
+        Ok(f) if f.len() == 1 && f[0] == b"JPXDecode" => Some(FilterKind::Jpx),
         Ok(f) if f.len() == 1 && f[0] == b"FlateDecode" => Some(FilterKind::RawFlate),
         Ok(f) if f.len() == 2 && f[0] == b"FlateDecode" && f[1] == b"DCTDecode" => {
             Some(FilterKind::FlateDct)
@@ -403,28 +441,33 @@ fn jpeg_bytes<'a>(stream: &'a Stream, filter: &FilterKind) -> Option<std::borrow
     }
 }
 
-fn color_kind(doc: &Document, dict: &Dictionary) -> Option<ColorKind> {
-    let cs_obj = dict.get(b"ColorSpace").ok()?;
-    let resolved: &Object = match cs_obj {
+fn base_of(doc: &Document, cs: &Object) -> Option<Base> {
+    let resolved: &Object = match cs {
         Object::Reference(rid) => doc.get_object(*rid).ok()?,
         other => other,
     };
     match resolved {
         Object::Name(name) => match name.as_slice() {
-            b"DeviceGray" | b"CalGray" => Some(ColorKind::Gray),
-            b"DeviceRGB" | b"CalRGB" => Some(ColorKind::Rgb),
+            b"DeviceGray" | b"CalGray" | b"G" => Some(Base::Gray),
+            b"DeviceRGB" | b"CalRGB" | b"RGB" => Some(Base::Rgb),
+            b"DeviceCMYK" | b"CMYK" => Some(Base::Cmyk),
             _ => None,
         },
         Object::Array(arr) => {
             let first = arr.first()?.as_name().ok()?;
-            if first != b"ICCBased" {
-                return None;
-            }
-            let icc_id = arr.get(1)?.as_reference().ok()?;
-            let icc_stream = doc.get_object(icc_id).ok()?.as_stream().ok()?;
-            match icc_stream.dict.get(b"N").and_then(Object::as_i64).ok()? {
-                1 => Some(ColorKind::Gray),
-                3 => Some(ColorKind::Rgb),
+            match first {
+                b"ICCBased" => {
+                    let icc_id = arr.get(1)?.as_reference().ok()?;
+                    let icc_stream = doc.get_object(icc_id).ok()?.as_stream().ok()?;
+                    match icc_stream.dict.get(b"N").and_then(Object::as_i64).ok()? {
+                        1 => Some(Base::Gray),
+                        3 => Some(Base::Rgb),
+                        4 => Some(Base::Cmyk),
+                        _ => None,
+                    }
+                }
+                b"CalGray" => Some(Base::Gray),
+                b"CalRGB" => Some(Base::Rgb),
                 _ => None,
             }
         }
@@ -432,52 +475,264 @@ fn color_kind(doc: &Document, dict: &Dictionary) -> Option<ColorKind> {
     }
 }
 
+fn color_kind(doc: &Document, dict: &Dictionary) -> Option<ColorKind> {
+    let cs_obj = dict.get(b"ColorSpace").ok()?;
+    let resolved: &Object = match cs_obj {
+        Object::Reference(rid) => doc.get_object(*rid).ok()?,
+        other => other,
+    };
+    if let Object::Array(arr) = resolved
+        && matches!(
+            arr.first().and_then(|o| o.as_name().ok()),
+            Some(b"Indexed" | b"I")
+        )
+    {
+        let base = base_of(doc, arr.get(1)?)?;
+        let hival = arr.get(2)?.as_i64().ok()?.clamp(0, 255) as usize;
+        let lut = match arr.get(3)? {
+            Object::String(bytes, _) => bytes.clone(),
+            Object::Reference(r) => {
+                let s = doc.get_object(*r).ok()?.as_stream().ok()?;
+                s.decompressed_content()
+                    .ok()
+                    .unwrap_or_else(|| s.content.clone())
+            }
+            _ => return None,
+        };
+        if lut.len() < (hival + 1) * base.channels() {
+            return None;
+        }
+        return Some(ColorKind::Indexed { base, lut });
+    }
+    Some(match base_of(doc, cs_obj)? {
+        Base::Gray => ColorKind::Gray,
+        Base::Rgb => ColorKind::Rgb,
+        Base::Cmyk => ColorKind::Cmyk,
+    })
+}
+
+/// 4-channel CMYK pixels (the `image` crate has no CMYK buffer type).
+struct CmykImage {
+    w: u32,
+    h: u32,
+    data: Vec<u8>,
+}
+
+impl CmykImage {
+    fn channel(&self, c: usize) -> GrayImage {
+        let plane = self.data.as_chunks::<4>().0.iter().map(|p| p[c]).collect();
+        GrayImage::from_raw(self.w, self.h, plane).expect("plane size")
+    }
+
+    fn from_channels(planes: [GrayImage; 4]) -> CmykImage {
+        let (w, h) = planes[0].dimensions();
+        let mut data = Vec::with_capacity(w as usize * h as usize * 4);
+        for i in 0..(w * h) as usize {
+            for p in &planes {
+                data.push(p.as_raw()[i]);
+            }
+        }
+        CmykImage { w, h, data }
+    }
+
+    fn crop(&self, x0: u32, y0: u32, cw: u32, ch: u32) -> CmykImage {
+        let mut data = Vec::with_capacity(cw as usize * ch as usize * 4);
+        for y in y0..y0 + ch {
+            let start = (y as usize * self.w as usize + x0 as usize) * 4;
+            data.extend_from_slice(&self.data[start..start + cw as usize * 4]);
+        }
+        CmykImage { w: cw, h: ch, data }
+    }
+
+    /// Resized channel by channel (no colour mixing between channels).
+    fn resize(&self, w: u32, h: u32) -> CmykImage {
+        let planes = [0, 1, 2, 3].map(|c| {
+            image::imageops::resize(
+                &self.channel(c),
+                w,
+                h,
+                image::imageops::FilterType::Lanczos3,
+            )
+        });
+        CmykImage::from_channels(planes)
+    }
+}
+
 enum Pixels {
     Gray(GrayImage),
     Rgb(RgbImage),
+    Cmyk(CmykImage),
+}
+
+/// A decoded image plus what the re-encoding must know about its source.
+struct Decoded {
+    pixels: Pixels,
+    /// CMYK only: the pixels are the source JPEG's *stored* samples (Adobe
+    /// marker, possibly inverted), so the source `/Decode` must be kept
+    /// as-is. Otherwise CMYK pixels are stored inverted with
+    /// `/Decode [1 0 1 0 1 0 1 0]` (the Photoshop/img2pdf convention).
+    cmyk_passthrough: bool,
+    /// Came from a palette image: a lossless palette re-encoding is always
+    /// worth trying (it can't have more colours unless resized).
+    from_palette: bool,
+    /// JPEG 2000 alpha channel, for `/SMaskInData`.
+    jpx_alpha: Option<GrayImage>,
+}
+
+fn bpc_of(stream: &Stream) -> i64 {
+    stream
+        .dict
+        .get(b"BitsPerComponent")
+        .and_then(Object::as_i64)
+        .unwrap_or(8)
+}
+
+fn invert(mut v: Vec<u8>) -> Vec<u8> {
+    for b in v.iter_mut() {
+        *b = 255 - *b;
+    }
+    v
+}
+
+fn pixels_from(base: Base, w: u32, h: u32, data: Vec<u8>) -> Option<Pixels> {
+    if data.len() != w as usize * h as usize * base.channels() {
+        return None;
+    }
+    Some(match base {
+        Base::Gray => Pixels::Gray(GrayImage::from_raw(w, h, data)?),
+        Base::Rgb => Pixels::Rgb(RgbImage::from_raw(w, h, data)?),
+        // Non-passthrough CMYK is stored inverted (see `Decoded`).
+        Base::Cmyk => Pixels::Cmyk(CmykImage {
+            w,
+            h,
+            data: invert(data),
+        }),
+    })
 }
 
 fn decode_pixels(
     stream: &Stream,
-    color: &ColorKind,
+    color: Option<&ColorKind>,
     filter: &FilterKind,
     w: u32,
     h: u32,
-) -> Option<Pixels> {
+) -> Option<Decoded> {
+    let plain = |pixels| Decoded {
+        pixels,
+        cmyk_passthrough: false,
+        from_palette: false,
+        jpx_alpha: None,
+    };
     match filter {
         FilterKind::Dct | FilterKind::FlateDct => {
             let jpeg = jpeg_bytes(stream, filter)?;
-            let img = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg).ok()?;
-            Some(match color {
-                ColorKind::Gray => Pixels::Gray(img.into_luma8()),
-                ColorKind::Rgb => Pixels::Rgb(img.into_rgb8()),
-            })
+            match color? {
+                ColorKind::Cmyk => {
+                    let (dw, dh, data) = image_codecs::decode_cmyk_jpeg(&jpeg)?;
+                    if (dw, dh) != (w, h) {
+                        return None;
+                    }
+                    if image_codecs::jpeg_has_adobe_marker(&jpeg) {
+                        Some(Decoded {
+                            pixels: Pixels::Cmyk(CmykImage { w, h, data }),
+                            cmyk_passthrough: true,
+                            from_palette: false,
+                            jpx_alpha: None,
+                        })
+                    } else if stream.dict.has(b"Decode") {
+                        None
+                    } else {
+                        Some(plain(Pixels::Cmyk(CmykImage {
+                            w,
+                            h,
+                            data: invert(data),
+                        })))
+                    }
+                }
+                ColorKind::Gray | ColorKind::Rgb => {
+                    let img = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg)
+                        .ok()?;
+                    Some(plain(match color? {
+                        ColorKind::Gray => Pixels::Gray(img.into_luma8()),
+                        _ => Pixels::Rgb(img.into_rgb8()),
+                    }))
+                }
+                ColorKind::Indexed { .. } => None,
+            }
         }
-        FilterKind::RawFlate | FilterKind::RawNone => {
-            let bpc = stream
-                .dict
-                .get(b"BitsPerComponent")
-                .and_then(Object::as_i64)
-                .unwrap_or(8);
-            if bpc != 8 {
+        FilterKind::Jpx => {
+            // A /Decode array or an explicit palette colour space would need
+            // handling this decoder doesn't do.
+            if stream.dict.has(b"Decode") || matches!(color, Some(ColorKind::Indexed { .. })) {
                 return None;
             }
+            let jpx = image_codecs::decode_jpx(&stream.content)?;
+            if (jpx.width, jpx.height) != (w, h) {
+                return None;
+            }
+            let base = match jpx.channels {
+                1 => Base::Gray,
+                3 => Base::Rgb,
+                _ => Base::Cmyk,
+            };
+            // An explicit /ColorSpace must agree on the component count.
+            let declared = match color {
+                None => None,
+                Some(ColorKind::Gray) => Some(Base::Gray),
+                Some(ColorKind::Rgb) => Some(Base::Rgb),
+                Some(ColorKind::Cmyk) => Some(Base::Cmyk),
+                Some(ColorKind::Indexed { .. }) => return None,
+            };
+            if declared.is_some_and(|d| d != base) {
+                return None;
+            }
+            let jpx_alpha = jpx.alpha.and_then(|a| GrayImage::from_raw(w, h, a));
+            let mut d = plain(pixels_from(base, w, h, jpx.data)?);
+            d.jpx_alpha = jpx_alpha;
+            Some(d)
+        }
+        FilterKind::RawFlate | FilterKind::RawNone => {
+            let bpc = bpc_of(stream);
             let raw = match filter {
                 FilterKind::RawFlate => stream.decompressed_content().ok()?,
                 _ => stream.content.clone(),
             };
-            match color {
-                ColorKind::Gray => {
-                    if raw.len() as u64 != w as u64 * h as u64 {
-                        return None;
+            if stream.dict.has(b"Decode") && !matches!(color?, ColorKind::Gray | ColorKind::Rgb) {
+                return None;
+            }
+            match color? {
+                ColorKind::Indexed { base, lut } => {
+                    let idx =
+                        image_codecs::unpack_samples(&raw, w as usize, h as usize, bpc as u8)?;
+                    let n = base.channels();
+                    let hival = lut.len() / n - 1;
+                    let mut data = Vec::with_capacity(idx.len() * n);
+                    for i in idx {
+                        let e = (i as usize).min(hival) * n;
+                        data.extend_from_slice(&lut[e..e + n]);
                     }
-                    GrayImage::from_raw(w, h, raw).map(Pixels::Gray)
+                    let mut d = plain(pixels_from(*base, w, h, data)?);
+                    d.from_palette = true;
+                    Some(d)
                 }
-                ColorKind::Rgb => {
-                    if raw.len() as u64 != w as u64 * h as u64 * 3 {
+                c => {
+                    let base = match c {
+                        ColorKind::Gray => Base::Gray,
+                        ColorKind::Rgb => Base::Rgb,
+                        _ => Base::Cmyk,
+                    };
+                    let raw = match bpc {
+                        8 => raw,
+                        16 => image_codecs::samples_16_to_8(&raw),
+                        _ => return None,
+                    };
+                    let expected = w as usize * h as usize * base.channels();
+                    if raw.len() < expected {
                         return None;
                     }
-                    RgbImage::from_raw(w, h, raw).map(Pixels::Rgb)
+                    let mut raw = raw;
+                    raw.truncate(expected);
+                    Some(plain(pixels_from(base, w, h, raw)?))
                 }
             }
         }
@@ -531,9 +786,19 @@ fn target_dims(w: u32, h: u32, placement: Placement, profile: &Profile) -> (u32,
     (new_w, new_h)
 }
 
-fn encode_jpeg(data: &[u8], w: u32, h: u32, gray: bool, quality: u8) -> Option<Vec<u8>> {
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum JpegColor {
+    Gray,
+    Rgb,
+    Cmyk,
+}
+
+fn encode_jpeg(data: &[u8], w: u32, h: u32, color: JpegColor, quality: u8) -> Option<Vec<u8>> {
+    if color == JpegColor::Cmyk {
+        return image_codecs::encode_cmyk_jpeg(data, w, h, quality);
+    }
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| -> std::io::Result<Vec<u8>> {
-        let color_space = if gray {
+        let color_space = if color == JpegColor::Gray {
             mozjpeg::ColorSpace::JCS_GRAYSCALE
         } else {
             mozjpeg::ColorSpace::JCS_RGB
@@ -566,8 +831,14 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     if width == 0 || height == 0 {
         return None;
     }
-    let color = job.color?;
     let filter = classify_filter(stream)?;
+    if let Some(plan) = plan_bilevel(&job, &filter, width, height) {
+        return plan;
+    }
+    // A colour space is required, except for JPEG 2000 (it can carry its own).
+    if job.color.is_none() && !matches!(filter, FilterKind::Jpx) {
+        return None;
+    }
     let placement = job.placement.unwrap_or_else(|| {
         let (pw, ph) = fallback_pt;
         let dpi_x = width as f32 / (pw / 72.0);
@@ -584,14 +855,32 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     // A scanned page: one image spanning (nearly) the full page width.
     let covers_page = job.placement.is_some() && width as f32 >= 0.8 * placement.page_px;
 
-    let pixels = decode_pixels(stream, &color, &filter, width, height)?;
+    let Decoded {
+        pixels,
+        cmyk_passthrough,
+        from_palette,
+        jpx_alpha,
+    } = decode_pixels(stream, job.color.as_ref(), &filter, width, height)?;
 
     // Opaque soft masks are dropped before anything else: the parent then
-    // needs no mask handling at all.
+    // needs no mask handling at all. A JPEG 2000 image's own alpha channel
+    // stands in for a soft mask when `/SMaskInData` asks for it.
+    let smask_in_data = stream
+        .dict
+        .get(b"SMaskInData")
+        .and_then(Object::as_i64)
+        .unwrap_or(0)
+        != 0;
     let mut smask = job.smask.as_ref().and_then(|(sid, s)| {
         let alpha = decode_smask(s)?;
-        Some((*sid, alpha))
+        Some((Some(*sid), alpha))
     });
+    if job.smask.is_none()
+        && smask_in_data
+        && let Some(alpha) = jpx_alpha
+    {
+        smask = Some((None, alpha));
+    }
     let smask_dims = smask.as_ref().map(|(_, a)| a.dimensions());
     let drop_smask = x.drop_opaque_smask
         && smask
@@ -602,7 +891,7 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     let crop = (x.crop && job.crop_ok)
         .then(|| crop_rect(placement.visible, width, height))
         .flatten()
-        .filter(|_| drop_smask || job.smask.is_none() || smask_dims == Some((width, height)));
+        .filter(|_| drop_smask || smask.is_none() || smask_dims == Some((width, height)));
     let (pixels, width, height, crop_unit) = match crop {
         None => (pixels, width, height, None),
         Some((x0, y0, x1, y1)) => {
@@ -623,6 +912,7 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
                 Pixels::Rgb(i) => {
                     Pixels::Rgb(image::imageops::crop_imm(&i, x0, y0, cw, ch).to_image())
                 }
+                Pixels::Cmyk(i) => Pixels::Cmyk(i.crop(x0, y0, cw, ch)),
             };
             (cropped, cw, ch, Some(unit))
         }
@@ -661,26 +951,54 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
             new_h,
             image::imageops::FilterType::Lanczos3,
         )),
+        Pixels::Cmyk(img) if needs_resize => Pixels::Cmyk(img.resize(new_w, new_h)),
         p => p,
     };
 
     let mut dict = stream.dict.clone();
-    let encoded = encode_best(&resized, new_w, new_h, profile, scan)?;
-    if encoded.content.len() >= original_len && !drop_smask && crop_unit.is_none() {
+    // Whatever the source was, the output isn't JPEG 2000 any more.
+    let was_jpx = matches!(filter, FilterKind::Jpx);
+    dict.remove(b"SMaskInData");
+    let encoded = encode_best(&resized, new_w, new_h, profile, scan, from_palette)?;
+    let smask_created = matches!(smask, Some((None, _)));
+    if encoded.content.len() >= original_len
+        && !drop_smask
+        && crop_unit.is_none()
+        && !(was_jpx && smask_created)
+    {
         return None;
     }
     let content = match encoded.kind {
-        EncodedKind::Jpeg { gray } => {
+        EncodedKind::Jpeg { color } => {
             dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
             dict.remove(b"DecodeParms");
-            dict.set(
-                "ColorSpace",
-                Object::Name(if gray {
-                    b"DeviceGray".to_vec()
-                } else {
-                    b"DeviceRGB".to_vec()
-                }),
-            );
+            match color {
+                JpegColor::Gray | JpegColor::Rgb => {
+                    dict.set(
+                        "ColorSpace",
+                        Object::Name(if color == JpegColor::Gray {
+                            b"DeviceGray".to_vec()
+                        } else {
+                            b"DeviceRGB".to_vec()
+                        }),
+                    );
+                    dict.remove(b"Decode");
+                }
+                JpegColor::Cmyk => {
+                    // Keep a CMYK (Device or ICC) colour space as it was;
+                    // palette or JPX sources get DeviceCMYK.
+                    let keep_cs = !from_palette && dict.has(b"ColorSpace");
+                    if !keep_cs {
+                        dict.set("ColorSpace", Object::Name(b"DeviceCMYK".to_vec()));
+                    }
+                    if !cmyk_passthrough {
+                        dict.set(
+                            "Decode",
+                            Object::Array([1, 0, 1, 0, 1, 0, 1, 0].map(Object::Integer).to_vec()),
+                        );
+                    }
+                }
+            }
             dict.set("BitsPerComponent", 8i64);
             encoded.content
         }
@@ -693,12 +1011,12 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
             dict.set("DecodeParms", parms);
             dict.set("ColorSpace", colorspace);
             dict.set("BitsPerComponent", bpc as i64);
+            dict.remove(b"Decode");
             encoded.content
         }
     };
     dict.set("Width", new_w as i64);
     dict.set("Height", new_h as i64);
-    dict.remove(b"Decode");
 
     let smask_action = if drop_smask {
         SmaskAction::Drop
@@ -711,26 +1029,42 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
             alpha
         };
         let (w, h) = alpha.dimensions();
-        if (w, h) == (aw, ah) && !x.palette {
-            SmaskAction::Keep
-        } else {
-            let (content, flate, decode_parms) = encode_alpha(alpha.into_raw(), w, x);
-            let old_len = job
-                .smask
-                .as_ref()
-                .map(|(_, s)| s.content.len())
-                .unwrap_or(0);
-            if (w, h) == (aw, ah) && content.len() >= old_len {
-                SmaskAction::Keep
-            } else {
-                SmaskAction::Replace(SmaskUpdate {
-                    id: sid,
+        match sid {
+            // Alpha that was inside the JPEG 2000: becomes a real /SMask.
+            None => {
+                let (content, flate, decode_parms) = encode_alpha(alpha.into_raw(), w, x);
+                SmaskAction::Create(SmaskUpdate {
+                    id: (0, 0),
                     w,
                     h,
                     content,
                     flate,
                     decode_parms,
                 })
+            }
+            Some(sid) if (w, h) == (aw, ah) && !x.palette => {
+                let _ = sid;
+                SmaskAction::Keep
+            }
+            Some(sid) => {
+                let (content, flate, decode_parms) = encode_alpha(alpha.into_raw(), w, x);
+                let old_len = job
+                    .smask
+                    .as_ref()
+                    .map(|(_, s)| s.content.len())
+                    .unwrap_or(0);
+                if (w, h) == (aw, ah) && content.len() >= old_len {
+                    SmaskAction::Keep
+                } else {
+                    SmaskAction::Replace(SmaskUpdate {
+                        id: sid,
+                        w,
+                        h,
+                        content,
+                        flate,
+                        decode_parms,
+                    })
+                }
             }
         }
     } else {
@@ -744,6 +1078,50 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         smask: smask_action,
         crop: crop_unit,
     })
+}
+
+/// 1-bit images stored raw or Flate-compressed (including stencil masks):
+/// re-encoded losslessly as CCITT Group 4 when that's smaller. Returns
+/// `Some(plan)` when the image is bi-level (whether or not it gained),
+/// `None` to fall through to the general path.
+fn plan_bilevel(job: &Job, filter: &FilterKind, w: u32, h: u32) -> Option<Option<Plan>> {
+    let stream = &job.stream;
+    let is_mask = stream
+        .dict
+        .get(b"ImageMask")
+        .and_then(Object::as_bool)
+        .unwrap_or(false);
+    let one_bit_gray = bpc_of(stream) == 1 && matches!(job.color, Some(ColorKind::Gray));
+    if !is_mask && !one_bit_gray {
+        return None;
+    }
+    let raw = match filter {
+        FilterKind::RawFlate => stream.decompressed_content().ok(),
+        FilterKind::RawNone => Some(stream.content.clone()),
+        // CCITT, JBIG2, …: already bi-level codecs.
+        _ => None,
+    };
+    let plan = raw
+        .and_then(|raw| image_codecs::encode_g4(&raw, w, h))
+        .filter(|g4| g4.len() < stream.content.len())
+        .map(|g4| {
+            let mut dict = stream.dict.clone();
+            dict.set("Filter", Object::Name(b"CCITTFaxDecode".to_vec()));
+            let mut parms = Dictionary::new();
+            parms.set("K", -1i64);
+            parms.set("Columns", w as i64);
+            parms.set("Rows", h as i64);
+            parms.set("BlackIs1", false);
+            dict.set("DecodeParms", Object::Dictionary(parms));
+            Plan {
+                id: job.id,
+                dict,
+                content: g4,
+                smask: SmaskAction::Keep,
+                crop: None,
+            }
+        });
+    Some(plan)
 }
 
 fn decode_smask(stream: &Stream) -> Option<GrayImage> {
@@ -764,7 +1142,7 @@ fn decode_smask(stream: &Stream) -> Option<GrayImage> {
     let raw = match classify_filter(stream)? {
         FilterKind::RawFlate => stream.decompressed_content().ok()?,
         FilterKind::RawNone => stream.content.clone(),
-        FilterKind::Dct | FilterKind::FlateDct => return None,
+        FilterKind::Dct | FilterKind::FlateDct | FilterKind::Jpx => return None,
     };
     if raw.len() as u64 != w as u64 * h as u64 {
         return None;
@@ -792,7 +1170,7 @@ fn encode_alpha(raw: Vec<u8>, w: u32, x: &Experimental) -> (Vec<u8>, bool, Optio
 #[allow(clippy::large_enum_variant)] // one per image, short-lived
 enum EncodedKind {
     Jpeg {
-        gray: bool,
+        color: JpegColor,
     },
     Palette {
         colorspace: Object,
@@ -813,23 +1191,34 @@ struct Encoded {
 /// Scanned pages get a fixed quality instead (the middle of the level's
 /// range): SSIM rewards reproducing scanner noise and earlier JPEG artifacts,
 /// which drove their quality to the maximum for no visible benefit.
-fn encode_best(pixels: &Pixels, w: u32, h: u32, profile: &Profile, scan: bool) -> Option<Encoded> {
+///
+/// Palette sources (`from_palette`) always try the lossless palette: unless
+/// resized, they can't have more than 256 colours.
+fn encode_best(
+    pixels: &Pixels,
+    w: u32,
+    h: u32,
+    profile: &Profile,
+    scan: bool,
+    from_palette: bool,
+) -> Option<Encoded> {
     let x = &profile.experimental;
-    let (raw, gray) = match pixels {
-        Pixels::Gray(img) => (img.as_raw(), true),
-        Pixels::Rgb(img) => (img.as_raw(), false),
+    let (raw, color) = match pixels {
+        Pixels::Gray(img) => (img.as_raw().as_slice(), JpegColor::Gray),
+        Pixels::Rgb(img) => (img.as_raw().as_slice(), JpegColor::Rgb),
+        Pixels::Cmyk(img) => (img.data.as_slice(), JpegColor::Cmyk),
     };
     let jpeg = if scan && x.ssim_target > 0.0 {
         let q =
             (x.min_jpeg_quality.min(profile.jpeg_quality) as u16 + profile.jpeg_quality as u16) / 2;
-        encode_jpeg(raw, w, h, gray, q as u8)
+        encode_jpeg(raw, w, h, color, q as u8)
     } else if x.ssim_target > 0.0 {
-        jpeg_for_ssim(raw, w, h, gray, profile)
+        jpeg_for_ssim(raw, w, h, color, profile)
     } else {
-        encode_jpeg(raw, w, h, gray, profile.jpeg_quality)
+        encode_jpeg(raw, w, h, color, profile.jpeg_quality)
     };
-    let palette = if x.palette {
-        encode_palette(raw, w, h, gray, x.zopfli)
+    let palette = if (x.palette || from_palette) && color != JpegColor::Cmyk {
+        encode_palette(raw, w, h, color == JpegColor::Gray, x.zopfli)
     } else {
         None
     };
@@ -838,7 +1227,7 @@ fn encode_best(pixels: &Pixels, w: u32, h: u32, profile: &Profile, scan: bool) -
         (Some(j), Some(p)) if p.content.len() <= j.len() + j.len() / 8 => Some(p),
         (Some(j), _) => Some(Encoded {
             content: j,
-            kind: EncodedKind::Jpeg { gray },
+            kind: EncodedKind::Jpeg { color },
         }),
         (None, p) => p,
     }
@@ -847,29 +1236,53 @@ fn encode_best(pixels: &Pixels, w: u32, h: u32, profile: &Profile, scan: bool) -
 /// Lowest JPEG quality in `[min_jpeg_quality, jpeg_quality]` whose SSIM
 /// against `raw` is at least `ssim_target` (binary search; SSIM is close to
 /// monotonic in quality). Falls back to `jpeg_quality` if even that misses.
-fn jpeg_for_ssim(raw: &[u8], w: u32, h: u32, gray: bool, profile: &Profile) -> Option<Vec<u8>> {
+fn jpeg_for_ssim(
+    raw: &[u8],
+    w: u32,
+    h: u32,
+    color: JpegColor,
+    profile: &Profile,
+) -> Option<Vec<u8>> {
     let x = &profile.experimental;
     let (mut lo, mut hi) = (
         x.min_jpeg_quality.min(profile.jpeg_quality),
         profile.jpeg_quality,
     );
-    let mut best = encode_jpeg(raw, w, h, gray, hi)?;
+    let mut best = encode_jpeg(raw, w, h, color, hi)?;
     while lo < hi {
         let mid = (lo + hi) / 2;
-        let candidate = encode_jpeg(raw, w, h, gray, mid)?;
-        let decoded =
-            image::load_from_memory_with_format(&candidate, image::ImageFormat::Jpeg).ok()?;
-        let score = if gray {
-            ssim(raw, decoded.into_luma8().as_raw(), w, h, 1)
-        } else {
-            let decoded = decoded.into_rgb8();
-            // Luma drives the score; the worst RGB channel only acts as a
-            // guard (with some slack) so chroma damage — a thin coloured line
-            // smeared by 4:2:0 subsampling — still vetoes a quality. Using the
-            // worst channel outright made scan noise push quality to the max.
-            let luma = ssim(&to_luma(raw), &to_luma(decoded.as_raw()), w, h, 1);
-            let worst = ssim(raw, decoded.as_raw(), w, h, 3);
-            luma.min(worst + CHROMA_SLACK)
+        let candidate = encode_jpeg(raw, w, h, color, mid)?;
+        let score = match color {
+            JpegColor::Gray => {
+                let decoded =
+                    image::load_from_memory_with_format(&candidate, image::ImageFormat::Jpeg)
+                        .ok()?;
+                ssim(raw, decoded.into_luma8().as_raw(), w, h, 1)
+            }
+            JpegColor::Rgb => {
+                let decoded =
+                    image::load_from_memory_with_format(&candidate, image::ImageFormat::Jpeg)
+                        .ok()?
+                        .into_rgb8();
+                // Luma drives the score; the worst RGB channel only acts as a
+                // guard (with some slack) so chroma damage — a thin coloured line
+                // smeared by 4:2:0 subsampling — still vetoes a quality. Using the
+                // worst channel outright made scan noise push quality to the max.
+                let luma = ssim(&to_luma(raw), &to_luma(decoded.as_raw()), w, h, 1);
+                let worst = ssim(raw, decoded.as_raw(), w, h, 3);
+                luma.min(worst + CHROMA_SLACK)
+            }
+            JpegColor::Cmyk => {
+                // No luma to lean on: mean of the four channels, with the worst
+                // one as a guard.
+                let (_, _, decoded) = image_codecs::decode_cmyk_jpeg(&candidate)?;
+                let per: Vec<f32> = (0..4)
+                    .map(|c| ssim_channel(raw, &decoded, w, h, 4, c))
+                    .collect();
+                let mean = per.iter().sum::<f32>() / 4.0;
+                let worst = per.iter().copied().fold(f32::MAX, f32::min);
+                mean.min(worst + CHROMA_SLACK)
+            }
         };
         if std::env::var_os("PDFSHRINK_DEBUG").is_some() {
             eprintln!("  {w}x{h} q={mid} ssim={score:.4}");
@@ -899,6 +1312,14 @@ fn to_luma(rgb: &[u8]) -> Vec<u8> {
 /// Mean SSIM over 8×8 windows (stride 4), computed per channel and reduced to
 /// the *worst* channel.
 fn ssim(a: &[u8], b: &[u8], w: u32, h: u32, channels: usize) -> f32 {
+    (0..channels)
+        .map(|c| ssim_channel(a, b, w, h, channels, c))
+        .fold(f32::MAX, f32::min)
+}
+
+/// Mean SSIM over 8×8 windows (stride 4) of channel `c` of interleaved
+/// `channels`-channel samples.
+fn ssim_channel(a: &[u8], b: &[u8], w: u32, h: u32, channels: usize, c: usize) -> f32 {
     const WIN: usize = 8;
     const STEP: usize = 4;
     const C1: f64 = (0.01 * 255.0) * (0.01 * 255.0);
@@ -907,42 +1328,38 @@ fn ssim(a: &[u8], b: &[u8], w: u32, h: u32, channels: usize) -> f32 {
     if w < WIN || h < WIN {
         return 1.0;
     }
-    let mut worst = f64::MAX;
-    for c in 0..channels {
-        let mut total = 0.0f64;
-        let mut count = 0usize;
-        let mut y = 0;
-        while y + WIN <= h {
-            let mut xx = 0;
-            while xx + WIN <= w {
-                let (mut sa, mut sb, mut saa, mut sbb, mut sab) = (0u64, 0u64, 0u64, 0u64, 0u64);
-                for j in 0..WIN {
-                    let row = ((y + j) * w + xx) * channels + c;
-                    for i in 0..WIN {
-                        let pa = a[row + i * channels] as u64;
-                        let pb = b[row + i * channels] as u64;
-                        sa += pa;
-                        sb += pb;
-                        saa += pa * pa;
-                        sbb += pb * pb;
-                        sab += pa * pb;
-                    }
+    let mut total = 0.0f64;
+    let mut count = 0usize;
+    let mut y = 0;
+    while y + WIN <= h {
+        let mut xx = 0;
+        while xx + WIN <= w {
+            let (mut sa, mut sb, mut saa, mut sbb, mut sab) = (0u64, 0u64, 0u64, 0u64, 0u64);
+            for j in 0..WIN {
+                let row = ((y + j) * w + xx) * channels + c;
+                for i in 0..WIN {
+                    let pa = a[row + i * channels] as u64;
+                    let pb = b[row + i * channels] as u64;
+                    sa += pa;
+                    sb += pb;
+                    saa += pa * pa;
+                    sbb += pb * pb;
+                    sab += pa * pb;
                 }
-                let n = (WIN * WIN) as f64;
-                let (ma, mb) = (sa as f64 / n, sb as f64 / n);
-                let va = saa as f64 / n - ma * ma;
-                let vb = sbb as f64 / n - mb * mb;
-                let cov = sab as f64 / n - ma * mb;
-                total += ((2.0 * ma * mb + C1) * (2.0 * cov + C2))
-                    / ((ma * ma + mb * mb + C1) * (va + vb + C2));
-                count += 1;
-                xx += STEP;
             }
-            y += STEP;
+            let n = (WIN * WIN) as f64;
+            let (ma, mb) = (sa as f64 / n, sb as f64 / n);
+            let va = saa as f64 / n - ma * ma;
+            let vb = sbb as f64 / n - mb * mb;
+            let cov = sab as f64 / n - ma * mb;
+            total += ((2.0 * ma * mb + C1) * (2.0 * cov + C2))
+                / ((ma * ma + mb * mb + C1) * (va + vb + C2));
+            count += 1;
+            xx += STEP;
         }
-        worst = worst.min(total / count as f64);
+        y += STEP;
     }
-    worst as f32
+    (total / count as f64) as f32
 }
 
 /// Scanned-paper detection: most of the image is light, low-saturation
@@ -954,6 +1371,8 @@ fn paper_white_point(pixels: &Pixels) -> Option<f32> {
     let (raw, ch): (&[u8], usize) = match pixels {
         Pixels::Gray(i) => (i.as_raw(), 1),
         Pixels::Rgb(i) => (i.as_raw(), 3),
+        // Print-oriented CMYK is never a desk-scanner page.
+        Pixels::Cmyk(_) => return None,
     };
     let mut hist = [0u64; 256];
     let mut total = 0u64;
@@ -1005,6 +1424,7 @@ fn whiten(pixels: &mut Pixels, white_point: f32) {
     let raw: &mut [u8] = match pixels {
         Pixels::Gray(i) => i.as_mut(),
         Pixels::Rgb(i) => i.as_mut(),
+        Pixels::Cmyk(_) => return,
     };
     for v in raw.iter_mut() {
         *v = lut[*v as usize];

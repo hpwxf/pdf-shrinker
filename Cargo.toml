@@ -25,4 +25,6 @@ anyhow = "1"
 thiserror = "2"
 tempfile = "3"
 flate2 = "1"
+hayro-jpeg2000 = { version = "0.4", default-features = false, features = ["std", "simd"] }
+fax = "0.3"
 zopfli = { version = "0.8", default-features = false, features = ["std", "zlib"] }

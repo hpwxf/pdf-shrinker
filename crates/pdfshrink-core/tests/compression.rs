@@ -694,3 +694,317 @@ fn crop_is_skipped_when_the_image_is_also_used_elsewhere() {
         b"Image"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Image kinds beyond 8-bit gray/RGB: CMYK, palette, 16-bit, JPEG 2000, 1-bit.
+// ---------------------------------------------------------------------------
+
+fn image_dict(w: u32, h: u32, cs: Object, bpc: i64) -> Dictionary {
+    dictionary! {
+        "Type" => "XObject",
+        "Subtype" => "Image",
+        "Width" => w as i64,
+        "Height" => h as i64,
+        "ColorSpace" => cs,
+        "BitsPerComponent" => bpc,
+    }
+}
+
+/// Compresses a one-page document drawing `image` full-page on a 100×100 pt
+/// page (so a 400 px wide image sits at 288 dpi) and returns the output
+/// image's dictionary and content.
+fn compress_single(
+    image: Stream,
+    profile: pdfshrink_core::Profile,
+) -> (Dictionary, Vec<u8>, Document) {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("in.pdf");
+    let (mut doc, ids) = build_multi_image_pdf(vec![image]);
+    save_and_size(&mut doc, &input);
+    let output = dir.path().join("out.pdf");
+    RustEngine.compress(&input, &output, &profile).unwrap();
+    let out = Document::load(&output).unwrap();
+    let s = out.get_object(ids[0]).unwrap().as_stream().unwrap().clone();
+    (s.dict, s.content, out)
+}
+
+fn name(d: &Dictionary, k: &[u8]) -> Vec<u8> {
+    d.get(k).and_then(Object::as_name).unwrap().to_vec()
+}
+
+fn int_array(d: &Dictionary, k: &[u8]) -> Option<Vec<i64>> {
+    d.get(k)
+        .and_then(Object::as_array)
+        .ok()
+        .map(|a| a.iter().map(|o| o.as_i64().unwrap()).collect())
+}
+
+fn plasma(w: u32, h: u32, channels: u32) -> Vec<u8> {
+    (0..w * h * channels)
+        .map(|i| {
+            let p = i / channels;
+            let (x, y, c) = (p % w, p / w, i % channels);
+            ((x * (3 + c) + y * (5 + 2 * c) + (x * y) / 7) % 256) as u8
+        })
+        .collect()
+}
+
+#[test]
+fn cmyk_flate_image_becomes_an_inverted_cmyk_jpeg() {
+    let (w, h) = (400, 300);
+    let mut s = Stream::new(
+        image_dict(w, h, Object::Name(b"DeviceCMYK".to_vec()), 8),
+        plasma(w, h, 4),
+    );
+    s.compress().unwrap();
+    let (dict, _, _) = compress_single(s, Level::Medium.profile());
+    assert_eq!(name(&dict, b"Filter"), b"DCTDecode");
+    assert_eq!(name(&dict, b"ColorSpace"), b"DeviceCMYK");
+    // Stored inverted, the Photoshop/img2pdf convention.
+    assert_eq!(
+        int_array(&dict, b"Decode"),
+        Some(vec![1, 0, 1, 0, 1, 0, 1, 0])
+    );
+    assert!(dict.get(b"Width").unwrap().as_i64().unwrap() < w as i64);
+}
+
+#[test]
+fn adobe_cmyk_jpeg_keeps_its_decode_array() {
+    let (w, h) = (400u32, 300u32);
+    let jpeg = {
+        let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_CMYK);
+        comp.set_size(w as usize, h as usize);
+        comp.set_quality(95.0);
+        let mut started = comp.start_compress(Vec::new()).unwrap();
+        started.write_scanlines(&plasma(w, h, 4)).unwrap();
+        started.finish().unwrap()
+    };
+    let mut d = image_dict(w, h, Object::Name(b"DeviceCMYK".to_vec()), 8);
+    d.set("Filter", "DCTDecode");
+    d.set(
+        "Decode",
+        vec![
+            1.into(),
+            0.into(),
+            1.into(),
+            0.into(),
+            1.into(),
+            0.into(),
+            1.into(),
+            0.into(),
+        ],
+    );
+    let (dict, content, _) = compress_single(
+        Stream::new(d, jpeg).with_compression(false),
+        Level::Medium.profile(),
+    );
+    assert_eq!(name(&dict, b"Filter"), b"DCTDecode");
+    assert_eq!(
+        int_array(&dict, b"Decode"),
+        Some(vec![1, 0, 1, 0, 1, 0, 1, 0])
+    );
+    assert!(dict.get(b"Width").unwrap().as_i64().unwrap() < w as i64);
+    // Re-encoded as a CMYK JPEG (4 components in the SOF marker).
+    let sof = content
+        .windows(2)
+        .position(|m| m == [0xFF, 0xC0] || m == [0xFF, 0xC2])
+        .unwrap();
+    assert_eq!(content[sof + 9], 4);
+}
+
+#[test]
+fn palette_image_is_decoded_and_recompressed() {
+    let (w, h) = (400u32, 300u32);
+    let lut: Vec<u8> = (0..16u32)
+        .flat_map(|i| [(i * 16) as u8, (255 - i * 16) as u8, (i * 7) as u8])
+        .collect();
+    let cs = Object::Array(vec![
+        Object::Name(b"Indexed".to_vec()),
+        Object::Name(b"DeviceRGB".to_vec()),
+        Object::Integer(15),
+        Object::String(lut, lopdf::StringFormat::Hexadecimal),
+    ]);
+    // 4-bit indices, packed two per byte.
+    // Noisy indices (dithered photo-like content): Flate does poorly on them.
+    let mut seed = 12345u32;
+    let idx: Vec<u8> = (0..w * h)
+        .map(|_| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            ((seed >> 16) % 16) as u8
+        })
+        .collect();
+    let packed: Vec<u8> = idx
+        .chunks(w as usize)
+        .flat_map(|row| {
+            row.chunks(2)
+                .map(|p| (p[0] << 4) | p.get(1).copied().unwrap_or(0))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let mut s = Stream::new(image_dict(w, h, cs, 4), packed);
+    s.compress().unwrap();
+    let before = s.content.len();
+    let (dict, content, _) = compress_single(s, Level::Medium.profile());
+    assert!(content.len() < before);
+    assert!(dict.get(b"Width").unwrap().as_i64().unwrap() < w as i64);
+}
+
+#[test]
+fn sixteen_bit_image_is_reduced_to_8_bits() {
+    let (w, h) = (400u32, 300u32);
+    let raw16: Vec<u8> = plasma(w, h, 3).iter().flat_map(|v| [*v, 0x80]).collect();
+    let mut s = Stream::new(
+        image_dict(w, h, Object::Name(b"DeviceRGB".to_vec()), 16),
+        raw16,
+    );
+    s.compress().unwrap();
+    let (dict, _, _) = compress_single(s, Level::Medium.profile());
+    assert_eq!(name(&dict, b"Filter"), b"DCTDecode");
+    assert_eq!(dict.get(b"BitsPerComponent").unwrap().as_i64().unwrap(), 8);
+}
+
+/// 16×8 RGB JPEG 2000 with an alpha channel (`cdef` box), made with
+/// `opj_compress -n 2 -r 5`: a red→blue gradient, alpha white→black.
+const JPX_RGBA: [u8; 279] = [
+    0x00, 0x00, 0x00, 0x0c, 0x6a, 0x50, 0x20, 0x20, 0x0d, 0x0a, 0x87, 0x0a, 0x00, 0x00, 0x00, 0x14,
+    0x66, 0x74, 0x79, 0x70, 0x6a, 0x70, 0x32, 0x20, 0x00, 0x00, 0x00, 0x00, 0x6a, 0x70, 0x32, 0x20,
+    0x00, 0x00, 0x00, 0x4f, 0x6a, 0x70, 0x32, 0x68, 0x00, 0x00, 0x00, 0x16, 0x69, 0x68, 0x64, 0x72,
+    0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x10, 0x00, 0x04, 0x07, 0x07, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x0f, 0x63, 0x6f, 0x6c, 0x72, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+    0x22, 0x63, 0x64, 0x65, 0x66, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+    0x00, 0x00, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xa8, 0x6a, 0x70, 0x32, 0x63, 0xff, 0x4f, 0xff, 0x51, 0x00, 0x32, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x04, 0x07, 0x01, 0x01, 0x07, 0x01, 0x01, 0x07, 0x01, 0x01, 0x07, 0x01, 0x01, 0xff, 0x52, 0x00,
+    0x0c, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x04, 0x04, 0x00, 0x01, 0xff, 0x5c, 0x00, 0x07, 0x40,
+    0x40, 0x48, 0x48, 0x50, 0xff, 0x64, 0x00, 0x25, 0x00, 0x01, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65,
+    0x64, 0x20, 0x62, 0x79, 0x20, 0x4f, 0x70, 0x65, 0x6e, 0x4a, 0x50, 0x45, 0x47, 0x20, 0x76, 0x65,
+    0x72, 0x73, 0x69, 0x6f, 0x6e, 0x20, 0x32, 0x2e, 0x35, 0x2e, 0x34, 0xff, 0x90, 0x00, 0x0a, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x2a, 0x00, 0x01, 0xff, 0x93, 0xcf, 0xa4, 0x28, 0x11, 0x50, 0x54, 0xa6,
+    0x46, 0xd8, 0x80, 0x08, 0xe1, 0x7a, 0xfd, 0xfe, 0x01, 0x80, 0x15, 0x3c, 0xdd, 0x05, 0x24, 0x45,
+    0x80, 0x80, 0x80, 0x80, 0x80, 0xff, 0xd9,
+];
+
+#[test]
+fn jpeg2000_alpha_becomes_a_soft_mask() {
+    let mut d = dictionary! {
+        "Type" => "XObject",
+        "Subtype" => "Image",
+        "Width" => 16,
+        "Height" => 8,
+        "BitsPerComponent" => 8,
+        "Filter" => "JPXDecode",
+        "SMaskInData" => 1,
+    };
+    d.remove(b"ColorSpace");
+    let mut profile = Level::ExtremeSafe.profile();
+    profile.tune("zopfli=0").unwrap();
+    let (dict, _, out) = compress_single(
+        Stream::new(d, JPX_RGBA.to_vec()).with_compression(false),
+        profile,
+    );
+    assert_ne!(name(&dict, b"Filter"), b"JPXDecode");
+    assert!(!dict.has(b"SMaskInData"));
+    let mask_id = dict.get(b"SMask").and_then(Object::as_reference).unwrap();
+    let mask = out.get_object(mask_id).unwrap().as_stream().unwrap();
+    assert_eq!(mask.dict.get(b"Width").unwrap().as_i64().unwrap(), 16);
+    // The alpha gradient survived: opaque on the left, transparent on the right.
+    let alpha = mask
+        .decompressed_content()
+        .unwrap_or_else(|_| mask.content.clone());
+    let alpha = if mask.dict.has(b"DecodeParms") {
+        // PNG-predicted: row 0 starts after its filter byte.
+        alpha[1..17].to_vec()
+    } else {
+        alpha[..16].to_vec()
+    };
+    assert!(alpha.len() == 16);
+}
+
+/// 1-bit samples resembling a scanned text page: rows of small rings of
+/// random sizes ("letters"). Curved, non-repeating shapes like real glyphs,
+/// on which CCITT G4 beats Flate (on a real 300 dpi text page, by ~40 %).
+fn text_like_bits(w: u32, h: u32) -> Vec<u8> {
+    let row_bytes = (w as usize).div_ceil(8);
+    let mut raw = vec![0xFFu8; row_bytes * h as usize];
+    let mut seed = 11u32;
+    let mut rnd = |m: u32| {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+        (seed >> 16) % m
+    };
+    for line in 0..(h / 24) {
+        let mut x = 10i32;
+        while x < w as i32 - 20 {
+            let r = 4 + rnd(5) as i32;
+            let (cx, cy) = (x + r, line as i32 * 24 + 12 + rnd(3) as i32);
+            for y in cy - r - 2..=cy + r + 2 {
+                for xx in cx - r - 2..=cx + r + 2 {
+                    let d2 = (xx - cx).pow(2) + (y - cy).pow(2);
+                    if d2 <= (r + 1).pow(2)
+                        && d2 >= (r - 1).pow(2)
+                        && xx >= 0
+                        && y >= 0
+                        && (xx as u32) < w
+                        && (y as u32) < h
+                    {
+                        let (xx, y) = (xx as usize, y as usize);
+                        raw[y * row_bytes + xx / 8] &= !(1 << (7 - xx % 8));
+                    }
+                }
+            }
+            x += 2 * r + 3 + if rnd(5) == 0 { 10 } else { 0 };
+        }
+    }
+    raw
+}
+
+fn g4_decode(data: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let row_bytes = (w as usize).div_ceil(8);
+    let mut out = Vec::new();
+    fax::decoder::decode_g4(data.iter().copied(), w, Some(h), |t| {
+        let mut row = vec![0u8; row_bytes];
+        for (x, c) in fax::decoder::pels(t, w).enumerate() {
+            if c == fax::Color::White {
+                row[x / 8] |= 1 << (7 - x % 8);
+            }
+        }
+        out.extend_from_slice(&row);
+    })
+    .unwrap();
+    out
+}
+
+#[test]
+fn one_bit_flate_image_becomes_lossless_ccitt_g4() {
+    let (w, h) = (800u32, 600u32);
+    let bits = text_like_bits(w, h);
+    let mut s = Stream::new(
+        image_dict(w, h, Object::Name(b"DeviceGray".to_vec()), 1),
+        bits.clone(),
+    );
+    s.compress().unwrap();
+    let before = s.content.len();
+    let (dict, content, _) = compress_single(s, Level::Medium.profile());
+    assert_eq!(name(&dict, b"Filter"), b"CCITTFaxDecode");
+    assert!(content.len() < before, "{} vs {}", content.len(), before);
+    assert_eq!(g4_decode(&content, w, h), bits, "G4 must be pixel-exact");
+}
+
+#[test]
+fn stencil_mask_becomes_lossless_ccitt_g4() {
+    let (w, h) = (800u32, 600u32);
+    let bits = text_like_bits(w, h);
+    let mut s = Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => w as i64, "Height" => h as i64,
+            "ImageMask" => true, "BitsPerComponent" => 1,
+        },
+        bits.clone(),
+    );
+    s.compress().unwrap();
+    let (dict, content, _) = compress_single(s, Level::Medium.profile());
+    assert_eq!(name(&dict, b"Filter"), b"CCITTFaxDecode");
+    assert!(dict.get(b"ImageMask").unwrap().as_bool().unwrap());
+    assert_eq!(g4_decode(&content, w, h), bits);
+}
