@@ -24,6 +24,14 @@
   box-sizing: border-box;
 }
 
+/* Fixed single-view window: no page scroll, no WKWebView rubber-band bounce. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -170,7 +178,9 @@ button.link {
   margin: 0;
   padding: 0;
   overflow-y: auto;
+  overscroll-behavior: none;
   flex: 1;
+  min-height: 0;
   border-top: 1px solid var(--border);
 }
 
