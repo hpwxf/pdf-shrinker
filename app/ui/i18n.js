@@ -60,6 +60,10 @@ window.I18N = (() => {
       size: {
         units: ["B", "KB", "MB", "GB"],
       },
+      info: {
+        build: "PdfShrinker {version}\ncommit {commit}{dirty}",
+        dirtySuffix: " (uncommitted changes)",
+      },
     },
     fr: {
       app: {
@@ -112,6 +116,10 @@ window.I18N = (() => {
       },
       size: {
         units: ["o", "Ko", "Mo", "Go"],
+      },
+      info: {
+        build: "PdfShrinker {version}\ncommit {commit}{dirty}",
+        dirtySuffix: " (modifications non commitées)",
       },
     },
   };

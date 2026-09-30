@@ -3,7 +3,7 @@ mod install;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use pdfshrink_core::{compress_file, CompressOptions, Config, EngineChoice, Level, Outcome};
@@ -61,7 +61,12 @@ enum ConfigAction {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // `--version`/`-V` prints the git commit (and whether the build was made
+    // from a dirty tree) alongside the crate version, not just the crate
+    // version clap's derive `version` shorthand would print on its own.
+    let version: &'static str = pdfshrink_core::build_info().short().leak();
+    let matches = Cli::command().version(version).get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     match &cli.command {
         Some(Command::Config { action }) => run_config(action),

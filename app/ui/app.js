@@ -13,10 +13,60 @@ const dropZone = document.getElementById("drop-zone");
 const fileList = document.getElementById("file-list");
 const installBtn = document.getElementById("install-btn");
 const installStatus = document.getElementById("install-status");
+const buildInfoEl = document.getElementById("build-info");
+const buildInfoTooltip = document.getElementById("build-info-tooltip");
 
 /** path -> { li, detail, render() } */
 const files = new Map();
 let gsAvailable = true;
+let buildInfo = null;
+
+function buildInfoText() {
+  if (!buildInfo) return "";
+  const dirty = buildInfo.dirty ? t("info.dirtySuffix") : "";
+  return t("info.build", { version: buildInfo.version, commit: buildInfo.commit, dirty });
+}
+
+function renderBuildInfo() {
+  if (!buildInfo) return;
+  buildInfoEl.textContent = "ⓘ";
+  const text = buildInfoText();
+  // `title` is a harmless fallback (hover, after a delay); the tooltip below,
+  // toggled by click, is the primary way this is actually shown.
+  buildInfoEl.title = text;
+  if (!buildInfoTooltip.hidden) buildInfoTooltip.textContent = text;
+}
+
+function hideBuildInfoTooltip() {
+  buildInfoTooltip.hidden = true;
+  buildInfoEl.classList.remove("active");
+}
+
+buildInfoEl.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (buildInfoTooltip.hidden) {
+    buildInfoTooltip.textContent = buildInfoText();
+    buildInfoTooltip.hidden = false;
+    buildInfoEl.classList.add("active");
+  } else {
+    hideBuildInfoTooltip();
+  }
+});
+document.addEventListener("click", (e) => {
+  if (!buildInfoTooltip.hidden && !buildInfoTooltip.contains(e.target)) hideBuildInfoTooltip();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideBuildInfoTooltip();
+});
+
+async function loadBuildInfo() {
+  try {
+    buildInfo = await core.invoke("get_build_info");
+    renderBuildInfo();
+  } catch (e) {
+    console.error(e);
+  }
+}
 
 function humanSize(bytes) {
   if (bytes == null) return "";
@@ -122,6 +172,7 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
 window.I18N.onChange(() => {
   updateEngineOptionLabels();
   for (const entry of files.values()) renderFileStatus(entry);
+  renderBuildInfo();
 });
 
 pickFilesBtn.addEventListener("click", async () => {
@@ -212,3 +263,4 @@ installBtn.addEventListener("click", async () => {
 window.I18N.applyToDom();
 updateEngineOptionLabels();
 loadConfig();
+loadBuildInfo();

@@ -13,6 +13,7 @@ mod image_ops;
 mod level;
 mod placement;
 mod rust_engine;
+mod version;
 
 pub use compress::{compress_file, CompressOptions, Outcome};
 pub use config::Config;
@@ -21,3 +22,4 @@ pub use error::{PdfShrinkError, Result};
 pub use ghostscript_engine::GhostscriptEngine;
 pub use level::{Level, Profile};
 pub use rust_engine::RustEngine;
+pub use version::{build_info, BuildInfo};

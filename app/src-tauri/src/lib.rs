@@ -36,6 +36,23 @@ fn get_config() -> ConfigDto {
     config_dto()
 }
 
+#[derive(Clone, Serialize)]
+struct BuildInfoDto {
+    version: String,
+    commit: String,
+    dirty: bool,
+}
+
+#[tauri::command]
+fn get_build_info() -> BuildInfoDto {
+    let b = pdfshrink_core::build_info();
+    BuildInfoDto {
+        version: b.version.to_string(),
+        commit: b.commit.to_string(),
+        dirty: b.dirty,
+    }
+}
+
 #[tauri::command]
 fn set_default_level(level: String) -> Result<ConfigDto, String> {
     let mut cfg = Config::load();
@@ -158,6 +175,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,
+            get_build_info,
             set_default_level,
             set_default_engine,
             compress_files,

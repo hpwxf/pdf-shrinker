@@ -214,6 +214,7 @@ button.link {
 }
 
 footer {
+  position: relative;
   border-top: 1px solid var(--border);
   padding-top: 8px;
 }
@@ -221,4 +222,50 @@ footer {
 .status {
   margin: 4px 0 0;
   color: var(--muted);
+}
+
+.build-info {
+  position: absolute;
+  top: 8px;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 14px;
+  text-align: center;
+}
+
+.build-info:hover,
+.build-info:focus,
+.build-info.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.build-info-tooltip {
+  position: absolute;
+  bottom: 26px;
+  right: 0;
+  z-index: 10;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-line;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+
+.build-info-tooltip[hidden] {
+  display: none;
 }

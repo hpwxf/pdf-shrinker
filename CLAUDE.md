@@ -90,6 +90,11 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   new bytes are actually smaller. An `SMask` is resized to match its parent's new dimensions and kept
   in Flate (never re-encoded to JPEG, to avoid alpha artifacts) via a scratch `lopdf::Stream::compress()`
   call that reuses lopdf's own "keep raw if compression doesn't help" logic.
+- `build.rs` / `version.rs`: bakes the git commit (and dirty-tree flag) into the binary via
+  `cargo:rustc-env` + `env!()`, exposed at runtime as `pdfshrink_core::build_info()`. This lives in
+  `pdfshrink-core` alone, not in each front end — `env!()` only resolves within the crate that writes
+  the env var, but a plain function call works across crates, so the CLI (`--version`) and the app
+  (footer "ⓘ" tooltip) both just call it instead of each needing their own `build.rs`.
 - `config.rs`: `Config` (default level + engine) persisted at
   `~/Library/Application Support/com.haveneer.pdfshrinker/config.toml`. This is the single source of
   truth the CLI, the app and the Quick Action all read — the app's "set as default" checkbox writing
