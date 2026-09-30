@@ -36,23 +36,21 @@ impl Engine for RustEngine {
         }
 
         let original_pages = doc.get_pages().len();
-
-        let x = &profile.experimental;
         let mut phase = PhaseLog::new();
 
         doc.prune_objects();
         dedup_streams(&mut doc);
         phase.done("prune+dedup");
-        if x.deep_dedup {
+        if profile.deep_dedup {
             let n = deep_dedup::deep_dedup(&mut doc);
             phase.done(&format!("deep dedup ({n} merged)"));
         }
-        if x.merge_fonts {
+        if profile.merge_fonts {
             let n = font_merge::merge_truetype_subsets(&mut doc)
                 + type1_merge::merge_type1_subsets(&mut doc);
             phase.done(&format!("font merge ({n} programs merged)"));
         }
-        if x.cff {
+        if profile.cff {
             let n = type1_cff::convert_type1_to_cff(&mut doc);
             phase.done(&format!("Type 1 → CFF ({n} programs converted)"));
         }
@@ -65,7 +63,7 @@ impl Engine for RustEngine {
         phase.done(&format!(
             "images ({images_resampled} re-encoded, {images_skipped} skipped)"
         ));
-        if x.deep_dedup {
+        if profile.deep_dedup {
             // Identical inputs re-encode to identical outputs: catch pairs that
             // differed only in encoding before resampling.
             let n = deep_dedup::deep_dedup(&mut doc);
@@ -75,7 +73,7 @@ impl Engine for RustEngine {
         // Flate-compress any stream that isn't compressed yet (fonts, content
         // streams, …). A no-op for streams that already have a /Filter.
         doc.compress();
-        if x.zopfli {
+        if profile.zopfli {
             let saved = zopfli_pass::rezopfli_streams(&mut doc);
             phase.done(&format!("zopfli ({saved} bytes saved)"));
         }

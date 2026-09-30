@@ -14,7 +14,7 @@
 //! check in `plan_one` is what keeps this safe for images that were
 //! already well-optimized.
 //!
-//! The experimental levels (see [`crate::level::Experimental`]) add, per image:
+//! Depending on the level (see [`Profile`]), per image:
 //! a page-relative resolution cap, JPEG quality chosen by SSIM against the
 //! source, near-gray RGB stored as gray, few-colour images kept lossless as an
 //! `Indexed` palette, fully opaque soft masks dropped, and soft masks stored
@@ -33,7 +33,7 @@ use lopdf::{Dictionary, Document, Object, ObjectId, Stream, StringFormat};
 use rayon::prelude::*;
 
 use crate::image_codecs;
-use crate::level::{Experimental, Profile};
+use crate::level::Profile;
 use crate::placement::{self, Placement};
 
 /// Downsample/re-encode every eligible image in `doc` according to `profile`.
@@ -42,7 +42,7 @@ pub fn resample_images(doc: &mut Document, profile: &Profile) -> (usize, usize) 
     let placements = placement::compute_image_placement(doc);
     let fallback_pt = fallback_page_size_pt(doc);
     let smask_ids = collect_smask_ids(doc);
-    let refcounts = if profile.experimental.crop && placements.complete {
+    let refcounts = if profile.crop && placements.complete {
         count_references(doc)
     } else {
         HashMap::new()
@@ -770,7 +770,7 @@ fn decode_pixels(
 /// side that applies even when the DPI heuristic above didn't fire, since that
 /// heuristic trusts the placement matrix — which a clipped, oversized-then-cropped
 /// image can make wildly overstate the image's real on-page footprint. The
-/// experimental `page_px` cap is a third one. Whichever wants the smallest
+/// page-relative `page_px` cap is a third one. Whichever wants the smallest
 /// result wins.
 fn target_dims(w: u32, h: u32, placement: Placement, profile: &Profile) -> (u32, u32) {
     let effective_dpi = placement.dpi;
@@ -788,7 +788,7 @@ fn target_dims(w: u32, h: u32, placement: Placement, profile: &Profile) -> (u32,
         1.0
     };
 
-    let page_px = profile.experimental.page_px as f32;
+    let page_px = profile.page_px as f32;
     let page_scale = if page_px > 0.0 && placement.page_px > page_px * profile.trigger_ratio {
         (page_px / placement.page_px).clamp(0.05, 1.0)
     } else {
@@ -842,7 +842,6 @@ fn flate_encode(raw: Vec<u8>) -> (Vec<u8>, bool) {
 }
 
 fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan> {
-    let x = &profile.experimental;
     let stream = &job.stream;
     let width = stream.dict.get(b"Width").and_then(Object::as_i64).ok()? as u32;
     let height = stream.dict.get(b"Height").and_then(Object::as_i64).ok()? as u32;
@@ -900,13 +899,13 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         smask = Some((None, alpha));
     }
     let smask_dims = smask.as_ref().map(|(_, a)| a.dimensions());
-    let drop_smask = x.drop_opaque_smask
+    let drop_smask = profile.drop_opaque_smask
         && smask
             .as_ref()
             .is_some_and(|(_, a)| a.pixels().all(|p| p.0[0] == 255));
 
     // Cropping to the visible part (only with a mask we can crop identically).
-    let crop = (x.crop && job.crop_ok)
+    let crop = (profile.crop && job.crop_ok)
         .then(|| crop_rect(placement.visible, width, height))
         .flatten()
         .filter(|_| drop_smask || smask.is_none() || smask_dims == Some((width, height)));
@@ -945,12 +944,12 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     } else {
         None
     };
-    if let (Some(white_point), true) = (paper, x.scan_whiten) {
+    if let (Some(white_point), true) = (paper, profile.scan_whiten) {
         whiten(&mut pixels, white_point);
     }
     let scan = paper.is_some();
     let pixels = match pixels {
-        Pixels::Rgb(img) if x.detect_gray && is_near_gray(&img) => {
+        Pixels::Rgb(img) if profile.detect_gray && is_near_gray(&img) => {
             Pixels::Gray(image::DynamicImage::ImageRgb8(img).into_luma8())
         }
         p => p,
@@ -1050,7 +1049,7 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         match sid {
             // Alpha that was inside the JPEG 2000: becomes a real /SMask.
             None => {
-                let (content, flate, decode_parms) = encode_alpha(alpha.into_raw(), w, x);
+                let (content, flate, decode_parms) = encode_alpha(alpha.into_raw(), w, profile);
                 SmaskAction::Create(SmaskUpdate {
                     id: (0, 0),
                     w,
@@ -1060,12 +1059,12 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
                     decode_parms,
                 })
             }
-            Some(sid) if (w, h) == (aw, ah) && !x.palette => {
+            Some(sid) if (w, h) == (aw, ah) && !profile.palette => {
                 let _ = sid;
                 SmaskAction::Keep
             }
             Some(sid) => {
-                let (content, flate, decode_parms) = encode_alpha(alpha.into_raw(), w, x);
+                let (content, flate, decode_parms) = encode_alpha(alpha.into_raw(), w, profile);
                 let old_len = job
                     .smask
                     .as_ref()
@@ -1155,8 +1154,7 @@ fn plan_bilevel(
     let mut bilevel = *profile;
     bilevel.target_dpi *= BILEVEL_RESOLUTION_FACTOR;
     bilevel.max_dimension = (bilevel.max_dimension as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
-    bilevel.experimental.page_px =
-        (bilevel.experimental.page_px as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
+    bilevel.page_px = (bilevel.page_px as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
     let (new_w, new_h) = target_dims(w, h, placement, &bilevel);
     let bits = if (new_w, new_h) != (w, h) {
         // Which sample value paints: 0 unless a /Decode [1 0] inverts it.
@@ -1224,15 +1222,15 @@ fn decode_smask(stream: &Stream) -> Option<GrayImage> {
 }
 
 /// Soft masks stay lossless (JPEG ringing on alpha edges is very visible).
-/// Experimental levels also try a PNG predictor, which helps a lot on the
+/// With `palette` on, a PNG predictor is also tried, which helps a lot on the
 /// smooth gradients and large flat areas typical of alpha channels.
-fn encode_alpha(raw: Vec<u8>, w: u32, x: &Experimental) -> (Vec<u8>, bool, Option<Object>) {
-    if !x.palette {
+fn encode_alpha(raw: Vec<u8>, w: u32, profile: &Profile) -> (Vec<u8>, bool, Option<Object>) {
+    if !profile.palette {
         let (c, f) = flate_encode(raw);
         return (c, f, None);
     }
-    let plain = deflate(&raw, x.zopfli);
-    let predicted = deflate(&png_filter(&raw, w as usize, 1), x.zopfli);
+    let plain = deflate(&raw, profile.zopfli);
+    let predicted = deflate(&png_filter(&raw, w as usize, 1), profile.zopfli);
     if predicted.len() < plain.len() {
         (predicted, true, Some(png_parms(1, 8, w)))
     } else {
@@ -1257,8 +1255,8 @@ struct Encoded {
     kind: EncodedKind,
 }
 
-/// Picks the encoding: fixed-quality JPEG for regular levels; for the
-/// experimental ones, SSIM-driven JPEG quality and, for few-colour images, a
+/// Picks the encoding: JPEG at a fixed quality, or at the lowest quality
+/// meeting `ssim_target` when set, and, for few-colour images (`palette`), a
 /// lossless palette whenever it isn't much bigger than the JPEG.
 ///
 /// Scanned pages get a fixed quality instead (the middle of the level's
@@ -1275,23 +1273,23 @@ fn encode_best(
     scan: bool,
     from_palette: bool,
 ) -> Option<Encoded> {
-    let x = &profile.experimental;
     let (raw, color) = match pixels {
         Pixels::Gray(img) => (img.as_raw().as_slice(), JpegColor::Gray),
         Pixels::Rgb(img) => (img.as_raw().as_slice(), JpegColor::Rgb),
         Pixels::Cmyk(img) => (img.data.as_slice(), JpegColor::Cmyk),
     };
-    let jpeg = if scan && x.ssim_target > 0.0 {
-        let q =
-            (x.min_jpeg_quality.min(profile.jpeg_quality) as u16 + profile.jpeg_quality as u16) / 2;
+    let jpeg = if scan && profile.ssim_target > 0.0 {
+        let q = (profile.min_jpeg_quality.min(profile.jpeg_quality) as u16
+            + profile.jpeg_quality as u16)
+            / 2;
         encode_jpeg(raw, w, h, color, q as u8)
-    } else if x.ssim_target > 0.0 {
+    } else if profile.ssim_target > 0.0 {
         jpeg_for_ssim(raw, w, h, color, profile)
     } else {
         encode_jpeg(raw, w, h, color, profile.jpeg_quality)
     };
-    let palette = if (x.palette || from_palette) && color != JpegColor::Cmyk {
-        encode_palette(raw, w, h, color == JpegColor::Gray, x.zopfli)
+    let palette = if (profile.palette || from_palette) && color != JpegColor::Cmyk {
+        encode_palette(raw, w, h, color == JpegColor::Gray, profile.zopfli)
     } else {
         None
     };
@@ -1316,9 +1314,8 @@ fn jpeg_for_ssim(
     color: JpegColor,
     profile: &Profile,
 ) -> Option<Vec<u8>> {
-    let x = &profile.experimental;
     let (mut lo, mut hi) = (
-        x.min_jpeg_quality.min(profile.jpeg_quality),
+        profile.min_jpeg_quality.min(profile.jpeg_quality),
         profile.jpeg_quality,
     );
     let mut best = encode_jpeg(raw, w, h, color, hi)?;
@@ -1360,7 +1357,7 @@ fn jpeg_for_ssim(
         if std::env::var_os("PDFSHRINK_DEBUG").is_some() {
             eprintln!("  {w}x{h} q={mid} ssim={score:.4}");
         }
-        if score >= x.ssim_target {
+        if score >= profile.ssim_target {
             best = candidate;
             hi = mid;
         } else {

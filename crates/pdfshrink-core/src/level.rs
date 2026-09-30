@@ -2,31 +2,31 @@ use serde::{Deserialize, Serialize};
 
 /// Compression level requested by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Level {
-    /// No image resampling; only structural cleanup (dedup, stream recompression).
+    /// No image re-encoding; only structural cleanup (dedup, font merging,
+    /// stream recompression).
     Lossless,
     Low,
     #[default]
     Medium,
     High,
-    /// Experimental: lossless structural wins only on top of `High`'s image
-    /// settings, with image quality chosen per image against a strict
-    /// visual-similarity floor. See [`Experimental`].
-    ExtremeSafe,
-    /// Experimental: page-relative resolution cap + SSIM-driven JPEG quality.
+    /// Page-relative resolution cap, cropping to the visible area, scanned
+    /// paper whitened, Zopfli.
     Extreme,
-    /// Experimental: most aggressive variant; visibly lossy on close zoom.
+    /// Most aggressive variant; visibly lossy on close zoom.
     ExtremeMax,
 }
 
 impl Level {
-    /// Levels offered by the GUI. The experimental `Extreme*` levels are
-    /// deliberately left out until they've been validated on real documents;
-    /// they're reachable from the CLI (`-l extreme`, …) only.
-    pub const ALL: [Level; 4] = [Level::Lossless, Level::Low, Level::Medium, Level::High];
-
-    pub const EXPERIMENTAL: [Level; 3] = [Level::ExtremeSafe, Level::Extreme, Level::ExtremeMax];
+    pub const ALL: [Level; 6] = [
+        Level::Lossless,
+        Level::Low,
+        Level::Medium,
+        Level::High,
+        Level::Extreme,
+        Level::ExtremeMax,
+    ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -34,22 +34,35 @@ impl Level {
             Level::Low => "low",
             Level::Medium => "medium",
             Level::High => "high",
-            Level::ExtremeSafe => "extreme-safe",
             Level::Extreme => "extreme",
             Level::ExtremeMax => "extreme-max",
         }
     }
 
     pub fn parse(s: &str) -> Option<Level> {
-        match s.to_ascii_lowercase().as_str() {
-            "lossless" => Some(Level::Lossless),
-            "low" => Some(Level::Low),
-            "medium" => Some(Level::Medium),
-            "high" => Some(Level::High),
-            "extreme-safe" => Some(Level::ExtremeSafe),
-            "extreme" => Some(Level::Extreme),
-            "extreme-max" => Some(Level::ExtremeMax),
-            _ => None,
+        let s = s.to_ascii_lowercase();
+        Level::ALL.into_iter().find(|l| l.as_str() == s)
+    }
+
+    /// One-line summary of what the level does, for `--help` (the app has
+    /// its own translated copy in `app/ui/i18n.js`).
+    pub fn summary(&self) -> &'static str {
+        match self {
+            Level::Lossless => {
+                "images untouched; duplicate objects and font subsets merged, Type 1 fonts → CFF"
+            }
+            Level::Low => {
+                "+ images re-encoded (JPEG q85 or lossless palette), 300 dpi when above 450 dpi"
+            }
+            Level::Medium => "+ JPEG q75, 150 dpi when above 225 dpi",
+            Level::High => "+ 96 dpi when above 144 dpi, JPEG quality per image (SSIM ≥ 0.985)",
+            Level::Extreme => {
+                "+ slides capped at 2200 px across, images cropped to the page, scanned paper \
+                 whitened, Zopfli (slower)"
+            }
+            Level::ExtremeMax => {
+                "+ 72 dpi, 1600 px across, SSIM ≥ 0.96: visibly lossy when zoomed in"
+            }
         }
     }
 
@@ -59,97 +72,65 @@ impl Level {
             Level::Lossless => Profile {
                 level: *self,
                 resample_images: false,
-                target_dpi: 0.0,
-                trigger_ratio: 0.0,
-                jpeg_quality: 0,
-                max_dimension: 0,
-                experimental: Experimental::OFF,
+                ..Profile::BASE
             },
             Level::Low => Profile {
                 level: *self,
-                resample_images: true,
                 target_dpi: 300.0,
-                trigger_ratio: 1.5,
                 jpeg_quality: 85,
                 max_dimension: 4200,
-                experimental: Experimental::OFF,
+                ..Profile::BASE
             },
             Level::Medium => Profile {
                 level: *self,
-                resample_images: true,
                 target_dpi: 150.0,
-                trigger_ratio: 1.5,
                 jpeg_quality: 75,
                 max_dimension: 3000,
-                experimental: Experimental::OFF,
+                ..Profile::BASE
             },
             Level::High => Profile {
                 level: *self,
-                resample_images: true,
                 target_dpi: 96.0,
-                trigger_ratio: 1.5,
-                jpeg_quality: 55,
-                max_dimension: 2000,
-                experimental: Experimental::OFF,
-            },
-            Level::ExtremeSafe => Profile {
-                level: *self,
-                resample_images: true,
-                target_dpi: 96.0,
-                trigger_ratio: 1.5,
                 jpeg_quality: 70,
                 max_dimension: 2000,
-                experimental: Experimental {
-                    page_px: 0,
-                    ssim_target: 0.985,
-                    min_jpeg_quality: 40,
-                    // Pixel-exact on the visible area, but poppler smooths an
-                    // image drawn through a Form differently when zoomed far
-                    // out: keep "safe" free of any geometry change.
-                    crop: false,
-                    ..Experimental::LOSSLESS_EXTRAS
-                },
+                ssim_target: 0.985,
+                min_jpeg_quality: 40,
+                ..Profile::BASE
             },
             Level::Extreme => Profile {
                 level: *self,
-                resample_images: true,
                 target_dpi: 96.0,
                 trigger_ratio: 1.2,
                 jpeg_quality: 65,
                 max_dimension: 1800,
-                experimental: Experimental {
-                    page_px: 2200,
-                    ssim_target: 0.975,
-                    min_jpeg_quality: 35,
-                    scan_whiten: true,
-                    ..Experimental::LOSSLESS_EXTRAS
-                },
+                page_px: 2200,
+                ssim_target: 0.975,
+                min_jpeg_quality: 35,
+                crop: true,
+                scan_whiten: true,
+                zopfli: true,
+                ..Profile::BASE
             },
             Level::ExtremeMax => Profile {
                 level: *self,
-                resample_images: true,
                 target_dpi: 72.0,
                 trigger_ratio: 1.1,
                 jpeg_quality: 55,
                 max_dimension: 1400,
-                experimental: Experimental {
-                    page_px: 1600,
-                    ssim_target: 0.96,
-                    min_jpeg_quality: 30,
-                    scan_whiten: true,
-                    ..Experimental::LOSSLESS_EXTRAS
-                },
+                page_px: 1600,
+                ssim_target: 0.96,
+                min_jpeg_quality: 30,
+                crop: true,
+                scan_whiten: true,
+                zopfli: true,
+                ..Profile::BASE
             },
         }
-    }
-
-    pub fn is_experimental(&self) -> bool {
-        Level::EXPERIMENTAL.contains(self)
     }
 }
 
 /// Tuning parameters derived from a [`Level`], consumed by the compression engine.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Profile {
     pub level: Level,
     /// Whether raster images should be downsampled/recompressed at all.
@@ -167,12 +148,82 @@ pub struct Profile {
     /// "full-bleed background" technique) — this cap is the backstop for that
     /// case. `0` disables it.
     pub max_dimension: u32,
-    /// Extra passes used by the experimental `Extreme*` levels; all off for
-    /// the regular levels.
-    pub experimental: Experimental,
+    /// Page-relative resolution cap: an image is downsampled so that it has at
+    /// most this many pixels across the page's (displayed) width at its
+    /// placement.
+    /// Complements `target_dpi`, which is meaningless for oversized pages such
+    /// as slide exports (1920×1080 pt). `0` disables.
+    pub page_px: u32,
+    /// Per-image adaptive JPEG quality: the lowest quality in
+    /// `[min_jpeg_quality, jpeg_quality]` whose SSIM against the
+    /// (resized) source stays at or above this value. `0.0` disables (fixed
+    /// `jpeg_quality`).
+    pub ssim_target: f32,
+    pub min_jpeg_quality: u8,
+    /// Merge streams whose *decoded* content (and dictionary, minus encoding
+    /// keys) is identical, iterated to a fixpoint so e.g. two images become
+    /// mergeable once their soft masks have been merged. Lossless.
+    pub deep_dedup: bool,
+    /// Merge the many per-page subsets of one TrueType CID font (as emitted by
+    /// Keynote/PowerPoint/Quartz exports) or Type 1 font (LaTeX figures) into
+    /// a single font program. Lossless.
+    pub merge_fonts: bool,
+    /// Convert Type 1 font programs to CFF (`/FontFile3`, `Type1C`): same
+    /// outlines, 3–5× smaller. Hint replacement is dropped (stems merged into
+    /// one non-overlapping set), which only affects hinted rendering at small
+    /// sizes.
+    pub cff: bool,
+    /// Re-deflate every non-image Flate stream with Zopfli. Lossless, slow
+    /// (~3× the run time for a few % smaller).
+    pub zopfli: bool,
+    /// Store RGB images whose pixels are all (near-)gray as DeviceGray.
+    pub detect_gray: bool,
+    /// Keep images with few distinct colors (screenshots, diagrams, logos)
+    /// lossless as an `Indexed` palette + Flate/PNG predictor instead of JPEG,
+    /// whenever that is smaller than the JPEG (it usually is, and it avoids
+    /// ringing around text).
+    pub palette: bool,
+    /// Drop soft masks that are fully opaque; store the others with a PNG
+    /// predictor when that is smaller.
+    pub drop_opaque_smask: bool,
+    /// Crop images to the part that can ever be visible (the page edge cuts
+    /// off an oversized "full-bleed" background, …). Only done when every use
+    /// of the image was seen; the cropped image is drawn through a small Form
+    /// XObject so no content stream needs rewriting. Off below `Extreme`:
+    /// poppler smooths an image drawn through a Form differently when zoomed
+    /// far out.
+    pub crop: bool,
+    /// Scanned pages (an image spanning the page width, mostly light paper
+    /// that isn't pure white): stretch levels so the paper becomes white.
+    /// Lossy by design — it changes the page's look slightly (brighter paper).
+    pub scan_whiten: bool,
 }
 
 impl Profile {
+    /// What every level starts from: all lossless passes on, image settings
+    /// neutral, nothing that changes a page's geometry or look beyond
+    /// compression artifacts.
+    const BASE: Profile = Profile {
+        level: Level::Medium,
+        resample_images: true,
+        target_dpi: 0.0,
+        trigger_ratio: 1.5,
+        jpeg_quality: 0,
+        max_dimension: 0,
+        page_px: 0,
+        ssim_target: 0.0,
+        min_jpeg_quality: 0,
+        deep_dedup: true,
+        merge_fonts: true,
+        cff: true,
+        zopfli: false,
+        detect_gray: true,
+        palette: true,
+        drop_opaque_smask: true,
+        crop: false,
+        scan_whiten: false,
+    };
+
     /// Keys accepted by [`Profile::tune`].
     pub const TUNABLE: &'static str = "dpi, trigger, quality, max_dim, page_px, ssim, min_quality \
         (numbers); dedup, fonts, cff, zopfli, gray, palette, opaque_smask, crop, scan_whiten (0/1)";
@@ -191,107 +242,43 @@ impl Profile {
             "0" | "false" | "off" => Ok(false),
             _ => Err(bad()),
         };
-        let x = &mut self.experimental;
         match k {
             "dpi" => self.target_dpi = f()?,
             "trigger" => self.trigger_ratio = f()?,
             "quality" => self.jpeg_quality = u()?.clamp(1, 100) as u8,
             "max_dim" => self.max_dimension = u()?,
-            "page_px" => x.page_px = u()?,
-            "ssim" => x.ssim_target = f()?,
-            "min_quality" => x.min_jpeg_quality = u()?.clamp(1, 100) as u8,
-            "dedup" => x.deep_dedup = b()?,
-            "fonts" => x.merge_fonts = b()?,
-            "cff" => x.cff = b()?,
-            "zopfli" => x.zopfli = b()?,
-            "gray" => x.detect_gray = b()?,
-            "palette" => x.palette = b()?,
-            "opaque_smask" => x.drop_opaque_smask = b()?,
-            "crop" => x.crop = b()?,
-            "scan_whiten" => x.scan_whiten = b()?,
+            "page_px" => self.page_px = u()?,
+            "ssim" => self.ssim_target = f()?,
+            "min_quality" => self.min_jpeg_quality = u()?.clamp(1, 100) as u8,
+            "dedup" => self.deep_dedup = b()?,
+            "fonts" => self.merge_fonts = b()?,
+            "cff" => self.cff = b()?,
+            "zopfli" => self.zopfli = b()?,
+            "gray" => self.detect_gray = b()?,
+            "palette" => self.palette = b()?,
+            "opaque_smask" => self.drop_opaque_smask = b()?,
+            "crop" => self.crop = b()?,
+            "scan_whiten" => self.scan_whiten = b()?,
             _ => return Err(format!("unknown key '{k}' (expected: {})", Self::TUNABLE)),
         }
         Ok(())
     }
 }
 
-/// Knobs for the experimental `Extreme*` levels. Kept separate from the main
-/// [`Profile`] fields so the regular levels are guaranteed unaffected
-/// ([`Experimental::OFF`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Experimental {
-    /// Merge streams whose *decoded* content (and dictionary, minus encoding
-    /// keys) is identical, iterated to a fixpoint so e.g. two images become
-    /// mergeable once their soft masks have been merged. Lossless.
-    pub deep_dedup: bool,
-    /// Merge the many per-page subsets of one TrueType CID font (as emitted by
-    /// Keynote/PowerPoint/Quartz exports) into a single font program. Lossless.
-    pub merge_fonts: bool,
-    /// Convert Type 1 font programs to CFF (`/FontFile3`, `Type1C`): same
-    /// outlines, 3–5× smaller. Hint replacement is dropped (stems merged into
-    /// one non-overlapping set), which only affects hinted rendering at small
-    /// sizes.
-    pub cff: bool,
-    /// Re-deflate every non-image Flate stream with Zopfli. Lossless, slow.
-    pub zopfli: bool,
-    /// Store RGB images whose pixels are all (near-)gray as DeviceGray.
-    pub detect_gray: bool,
-    /// Keep images with few distinct colors (screenshots, diagrams, logos)
-    /// lossless as an `Indexed` palette + Flate/PNG predictor instead of JPEG,
-    /// whenever that is smaller than the JPEG (it usually is, and it avoids
-    /// ringing around text).
-    pub palette: bool,
-    /// Drop soft masks that are fully opaque.
-    pub drop_opaque_smask: bool,
-    /// Crop images to the part that can ever be visible (the page edge cuts
-    /// off an oversized "full-bleed" background, …). Only done when every use
-    /// of the image was seen; the cropped image is drawn through a small Form
-    /// XObject so no content stream needs rewriting.
-    pub crop: bool,
-    /// Scanned pages (an image spanning the page width, mostly light paper
-    /// that isn't pure white): stretch levels so the paper becomes white.
-    /// Lossy by design — it changes the page's look slightly (brighter paper).
-    pub scan_whiten: bool,
-    /// Page-relative resolution cap: an image is downsampled so that it has at
-    /// most this many pixels across the page's (displayed) width at its
-    /// placement.
-    /// Complements `target_dpi`, which is meaningless for oversized pages such
-    /// as slide exports (1920×1080 pt). `0` disables.
-    pub page_px: u32,
-    /// Per-image adaptive JPEG quality: the lowest quality in
-    /// `[min_jpeg_quality, jpeg_quality]` whose SSIM against the
-    /// (resized) source stays at or above this value. `0.0` disables (fixed
-    /// `jpeg_quality`).
-    pub ssim_target: f32,
-    pub min_jpeg_quality: u8,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl Experimental {
-    pub const OFF: Experimental = Experimental {
-        deep_dedup: false,
-        merge_fonts: false,
-        cff: false,
-        zopfli: false,
-        detect_gray: false,
-        palette: false,
-        drop_opaque_smask: false,
-        crop: false,
-        scan_whiten: false,
-        page_px: 0,
-        ssim_target: 0.0,
-        min_jpeg_quality: 0,
-    };
-
-    /// Every lossless extra switched on; lossy knobs left off.
-    pub const LOSSLESS_EXTRAS: Experimental = Experimental {
-        deep_dedup: true,
-        merge_fonts: true,
-        cff: true,
-        zopfli: true,
-        detect_gray: true,
-        palette: true,
-        drop_opaque_smask: true,
-        crop: true,
-        ..Experimental::OFF
-    };
+    #[test]
+    fn level_names_round_trip_through_parse_and_serde() {
+        for level in Level::ALL {
+            assert_eq!(Level::parse(level.as_str()), Some(level));
+            let toml = toml::to_string(&crate::Config {
+                default_level: level,
+            })
+            .unwrap();
+            assert!(toml.contains(&format!("\"{}\"", level.as_str())), "{toml}");
+        }
+        assert_eq!(Level::parse("extreme-safe"), None);
+    }
 }

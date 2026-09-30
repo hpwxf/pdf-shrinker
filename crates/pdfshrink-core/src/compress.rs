@@ -45,7 +45,7 @@ pub fn compress_file(input: &Path, opts: &CompressOptions) -> Result<Outcome> {
 /// Like [`compress_file`], with an explicit (possibly hand-tuned, see
 /// [`Profile::tune`](crate::Profile::tune)) profile and output suffix
 /// (`<name>-<suffix>.pdf`). Used by the CLI's `--tune`/`--suffix` to try
-/// experimental variants side by side.
+/// variants side by side.
 pub fn compress_file_with(input: &Path, profile: &Profile, suffix: &str) -> Result<Outcome> {
     if !input.is_file() {
         return Err(PdfShrinkError::Io(

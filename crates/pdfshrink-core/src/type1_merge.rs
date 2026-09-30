@@ -1,5 +1,5 @@
 //! Merges subsets of the same Type 1 font (`/FontFile`) into one program
-//! (experimental levels only).
+//! (every level, see `Profile::merge_fonts`).
 //!
 //! LaTeX documents that include PDF figures carry one subset of each Computer
 //! Modern font per figure (a thesis: 32 × CMR10, 29 × CMMI10, …). Type 1

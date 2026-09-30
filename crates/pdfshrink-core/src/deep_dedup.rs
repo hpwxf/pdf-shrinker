@@ -1,4 +1,4 @@
-//! Content-level deduplication (experimental levels only).
+//! Content-level deduplication (every level, see `Profile::deep_dedup`).
 //!
 //! `rust_engine::dedup_streams` only merges streams that are byte-for-byte
 //! identical *including* their dictionary. That misses a lot in real exports:

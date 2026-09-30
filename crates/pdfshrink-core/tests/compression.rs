@@ -515,10 +515,10 @@ fn count_images(doc: &Document) -> usize {
 }
 
 #[test]
-fn extreme_merges_images_identical_after_decoding() {
+fn deep_dedup_merges_images_identical_after_decoding() {
     // Same pixels and same soft-mask pixels, but encoded differently (raw vs
     // Flate) and each pointing at its own mask object: invisible to byte-level
-    // dedup, one image + one mask for the experimental deep dedup.
+    // dedup, one image + one mask for deep dedup.
     let dir = tempdir().unwrap();
     let input = dir.path().join("in.pdf");
     let raw_img = || {
@@ -544,8 +544,7 @@ fn extreme_merges_images_identical_after_decoding() {
     assert_eq!(count_images(&Document::load(&input).unwrap()), 4);
 
     let output = dir.path().join("out.pdf");
-    let mut profile = Level::ExtremeSafe.profile();
-    profile.tune("zopfli=0").unwrap();
+    let profile = Level::High.profile();
     RustEngine.compress(&input, &output, &profile).unwrap();
     assert_eq!(
         count_images(&Document::load(&output).unwrap()),
@@ -640,8 +639,7 @@ fn extreme_crops_an_image_hanging_off_the_page() {
     save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    let mut profile = Level::ExtremeSafe.profile();
-    profile.tune("zopfli=0").unwrap();
+    let mut profile = Level::High.profile();
     profile.tune("crop=1").unwrap();
     RustEngine.compress(&input, &output, &profile).unwrap();
 
@@ -683,8 +681,7 @@ fn crop_is_skipped_when_the_image_is_also_used_elsewhere() {
     save_and_size(&mut doc, &input);
 
     let output = dir.path().join("out.pdf");
-    let mut profile = Level::ExtremeSafe.profile();
-    profile.tune("zopfli=0").unwrap();
+    let mut profile = Level::High.profile();
     profile.tune("crop=1").unwrap();
     RustEngine.compress(&input, &output, &profile).unwrap();
     let out = Document::load(&output).unwrap();
@@ -898,8 +895,7 @@ fn jpeg2000_alpha_becomes_a_soft_mask() {
         "SMaskInData" => 1,
     };
     d.remove(b"ColorSpace");
-    let mut profile = Level::ExtremeSafe.profile();
-    profile.tune("zopfli=0").unwrap();
+    let profile = Level::High.profile();
     let (dict, _, out) = compress_single(
         Stream::new(d, JPX_RGBA.to_vec()).with_compression(false),
         profile,

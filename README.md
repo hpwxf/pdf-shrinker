@@ -42,8 +42,9 @@ pdfshrink config get level                   # read a persisted default
 pdfshrink config set level low               # change a persisted default
 ```
 
-Levels (`-l`): `lossless`, `low`, `medium`, `high`. Experimental, CLI only: `extreme-safe`,
-`extreme`, `extreme-max` (see [`docs/compression-strategies.md`](docs/compression-strategies.md)).
+Levels (`-l`), each building on the previous: `lossless`, `low`, `medium` (default), `high`,
+`extreme`, `extreme-max`. `pdfshrink --help` sums each one up in a line; details in
+[`docs/compression-strategies.md`](docs/compression-strategies.md).
 
 Everything is done by a built-in Rust engine: no external tool (Ghostscript or otherwise) is needed.
 

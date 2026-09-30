@@ -2,6 +2,7 @@ const { core, event, dialog } = window.__TAURI__;
 const { t } = window.I18N;
 
 const levelSelect = document.getElementById("level-select");
+const levelHint = document.getElementById("level-hint");
 const setDefaultCheckbox = document.getElementById("set-default");
 const compressBtn = document.getElementById("compress-btn");
 const clearBtn = document.getElementById("clear-btn");
@@ -133,12 +134,23 @@ function clearFiles() {
   compressBtn.disabled = true;
 }
 
+/** "extreme-max" -> "extremeMax", the i18n key naming convention. */
+function levelKey(level) {
+  return level.replace(/-(\w)/g, (_, c) => c.toUpperCase());
+}
+
+function renderLevelHint() {
+  levelHint.textContent = t(`levelHint.${levelKey(levelSelect.value)}`);
+}
+
 async function loadConfig() {
   const cfg = await core.invoke("get_config");
   levelSelect.value = cfg.level;
+  renderLevelHint();
 }
 
 async function onLevelChange() {
+  renderLevelHint();
   if (!setDefaultCheckbox.checked) return;
   try {
     await core.invoke("set_default_level", { level: levelSelect.value });
@@ -157,6 +169,7 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
 window.I18N.onChange(() => {
   for (const entry of files.values()) renderFileStatus(entry);
   renderBuildInfo();
+  renderLevelHint();
 });
 
 pickFilesBtn.addEventListener("click", async () => {
@@ -244,5 +257,6 @@ installBtn.addEventListener("click", async () => {
 });
 
 window.I18N.applyToDom();
+renderLevelHint();
 loadConfig();
 loadBuildInfo();

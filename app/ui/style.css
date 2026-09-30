@@ -125,6 +125,14 @@ header h1 {
   color: var(--muted);
 }
 
+.level-hint {
+  flex-basis: 100%;
+  margin: 0;
+  min-height: 2.8em; /* two lines: switching levels doesn't shift the layout */
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .options label.checkbox {
   flex-direction: row;
   align-items: center;

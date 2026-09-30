@@ -36,7 +36,7 @@ Done:
   when over-resolved, then CCITT G4 when smaller.
 
 Still open:
-- [ ] CMYK → RGB conversion on the experimental levels, for documents only meant for the screen
+- [ ] CMYK → RGB conversion at the `extreme` levels, for documents only meant for the screen
   (no output intent, no spot colours). Needs a CMS (`lcms2`) or at least the naive formula.
 - [ ] JBIG2 generic-region encoding (better than G4, what iLovePDF uses at "extreme"); decoding
   JBIG2 and CCITT Group 3 inputs.

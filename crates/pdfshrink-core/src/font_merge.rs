@@ -1,5 +1,5 @@
 //! Merges per-page subsets of the same TrueType CID font into one font program
-//! (experimental levels only).
+//! (every level, see `Profile::merge_fonts`).
 //!
 //! Slide exports (Keynote, PowerPoint via Quartz, …) embed a fresh subset of
 //! each font on every page: 100 subsets of Courier New at ~10 KB each, when

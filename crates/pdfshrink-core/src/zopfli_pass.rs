@@ -1,4 +1,4 @@
-//! Re-deflates Flate streams with Zopfli (experimental levels only): the same
+//! Re-deflates Flate streams with Zopfli (`extreme` levels only, see `Profile::zopfli`): the same
 //! `FlateDecode` format every reader understands, typically 5–8 % smaller than
 //! zlib's best level, at a much higher CPU cost — hence parallel, and fewer
 //! iterations for big streams.

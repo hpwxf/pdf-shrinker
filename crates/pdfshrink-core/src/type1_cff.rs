@@ -1,5 +1,5 @@
 //! Converts embedded Type 1 fonts (`/FontFile`) to CFF (`/FontFile3`,
-//! `/Subtype /Type1C`) — experimental levels only.
+//! `/Subtype /Type1C`) — every level, see `Profile::cff`.
 //!
 //! Type 1 programs are `eexec`-encrypted and their charstrings encrypted
 //! again, so Flate can't compress them; CFF stores the same outlines as plain,

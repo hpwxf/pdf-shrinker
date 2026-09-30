@@ -41,7 +41,7 @@ cargo run --release -p pdfshrink-core --example inspect_images -- file.pdf
 cargo run --release -p pdfshrink-core --example analyze -- file.pdf
 cargo run --release -p pdfshrink-core --example fonts -- file.pdf
 
-# Experimental levels (CLI only, not offered by the app): extreme-safe, extreme, extreme-max.
+# Levels: lossless, low, medium (default), high, extreme, extreme-max (same list in CLI and app).
 # --tune overrides one profile knob (repeatable), --suffix names the output <name>-<suffix>.pdf,
 # PDFSHRINK_DEBUG=1 prints per-phase timings and the JPEG quality search
 cargo run --release -p pdfshrink-cli -- -l extreme --tune page_px=1800 --suffix x1800 file.pdf
@@ -70,7 +70,7 @@ every front end calls. It picks an output path (`name-compressed.pdf`, `-compres
 runs the engine into a same-directory temp file, and only renames it into place if the result is
 actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
 
-- `level.rs`: `Level` (Lossless/Low/Medium/High) → `Profile` (target DPI, JPEG quality, trigger ratio).
+- `level.rs`: `Level` (Lossless/Low/Medium/High/Extreme/ExtremeMax) → `Profile` (target DPI, JPEG quality, trigger ratio, per-pass switches).
   An image is only touched if its effective on-page DPI exceeds `target_dpi * trigger_ratio`.
 - `engine.rs`: `Engine` trait (`compress(input, output, &Profile) -> Result<Report>`), implemented by
   `rust_engine.rs` (`RustEngine`) — the only engine. There used to be an optional Ghostscript engine
@@ -116,9 +116,12 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   `pdfshrink-core` alone, not in each front end — `env!()` only resolves within the crate that writes
   the env var, but a plain function call works across crates, so the CLI (`--version`) and the app
   (footer "ⓘ" tooltip) both just call it instead of each needing their own `build.rs`.
-- Experimental `Extreme*` levels (`Level::EXPERIMENTAL`, deliberately not in `Level::ALL` so the
-  GUI doesn't list them) switch on the `Experimental` knobs in `level.rs`; regular levels use
-  `Experimental::OFF`. Passes: `deep_dedup.rs` (merge objects equal once *decoded*, dictionary minus
+- Levels are one flat `Profile` struct per `Level` in `level.rs`, all built from `Profile::BASE`
+  (lossless passes on, nothing geometry/look-changing); `Level::summary()` is the one-line
+  description `--help` prints (the app has translated copies in `app/ui/i18n.js` — keep them in
+  sync). Lossless passes (deep dedup, font merge, CFF) run at every level; gray/palette/SMask
+  tricks at every lossy level; SSIM quality from `high` up; `page_px`, crop, `scan_whiten` and
+  Zopfli only at `extreme`/`extreme-max`. Passes: `deep_dedup.rs` (merge objects equal once *decoded*, dictionary minus
   encoding keys, iterated to a fixpoint — two images become equal once their SMasks merged);
   `font_merge.rs` (union the per-page subsets of one `CIDFontType2`/Identity TrueType font —
   subsetters keep original GIDs — into one program, only when glyph data/hinting agree);

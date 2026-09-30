@@ -21,8 +21,7 @@ struct Cli {
     /// PDF files to compress.
     files: Vec<PathBuf>,
 
-    /// Compression level: lossless, low, medium or high; experimental: extreme-safe, extreme,
-    /// extreme-max. Defaults to the configured default.
+    /// Compression level (see "Levels" below). Defaults to the configured default.
     #[arg(short = 'l', long, value_name = "LEVEL")]
     level: Option<String>,
 
@@ -75,7 +74,10 @@ fn main() -> ExitCode {
     // from a dirty tree) alongside the crate version, not just the crate
     // version clap's derive `version` shorthand would print on its own.
     let version: &'static str = pdfshrink_core::build_info().short().leak();
-    let matches = Cli::command().version(version).get_matches();
+    let matches = Cli::command()
+        .version(version)
+        .after_help(levels_help())
+        .get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     match &cli.command {
@@ -86,6 +88,20 @@ fn main() -> ExitCode {
         }) => install::run(*quick_action, *cli_link),
         None => run_compress(cli),
     }
+}
+
+fn level_names() -> String {
+    Level::ALL.map(|l| l.as_str()).join(", ")
+}
+
+/// "Levels" section of `--help`: one line per level, each adding to the
+/// previous one's settings.
+fn levels_help() -> String {
+    let mut help = String::from("Levels (each one adds to the previous):\n");
+    for level in Level::ALL {
+        help.push_str(&format!("  {:<12} {}\n", level.as_str(), level.summary()));
+    }
+    help
 }
 
 fn run_config(action: &ConfigAction) -> ExitCode {
@@ -108,7 +124,8 @@ fn run_config(action: &ConfigAction) -> ExitCode {
                     Some(l) => cfg.default_level = l,
                     None => {
                         eprintln!(
-                            "pdfshrink: unknown level '{value}' (expected: lossless, low, medium, high, or experimental: extreme-safe, extreme, extreme-max)"
+                            "pdfshrink: unknown level '{value}' (expected: {})",
+                            level_names()
                         );
                         return ExitCode::from(1);
                     }
@@ -142,7 +159,8 @@ fn run_compress(cli: Cli) -> ExitCode {
             Some(l) => l,
             None => {
                 eprintln!(
-                    "pdfshrink: unknown level '{s}' (expected: lossless, low, medium, high, or experimental: extreme-safe, extreme, extreme-max)"
+                    "pdfshrink: unknown level '{s}' (expected: {})",
+                    level_names()
                 );
                 return ExitCode::from(1);
             }

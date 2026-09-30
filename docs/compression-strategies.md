@@ -2,15 +2,14 @@
 
 This document describes what `pdfshrink-core` does at each compression level, then compares the
 result with iLovePDF on three real documents of very different kinds: a slide deck exported from
-Keynote, a LaTeX thesis, and a scanned exam. The `extreme-safe`, `extreme` and `extreme-max`
-levels are **experimental**: they are available from the CLI only (`-l extreme`, …), not in the
-app.
+Keynote, a LaTeX thesis, and a scanned exam. Six levels, each one building on the previous:
+`lossless`, `low`, `medium` (default), `high`, `extreme`, `extreme-max`; the CLI (`--help`) and the
+app describe each in one line.
 
 ## 1. Common pipeline
 
 Every level goes through the same built-in Rust engine (`rust_engine.rs`; there is no external
-tool), in this order. Steps in
-*italics* only run at the `extreme*` levels.
+tool), in this order. Steps in *italics* depend on the level (§2).
 
 1. **Cleanup**: drop unreachable objects, merge streams that are byte-for-byte identical (same
    dictionary, same content).
@@ -37,34 +36,39 @@ spaces.
 
 ## 2. Settings by level
 
-| | lossless | low | medium | high | extreme-safe | extreme | extreme-max |
-|---|---|---|---|---|---|---|---|
-| Image re-encoding | no | JPEG | JPEG | JPEG | JPEG / palette | JPEG / palette | JPEG / palette |
-| JPEG quality | – | 85 fixed | 75 fixed | 55 fixed | 40–70, SSIM ≥ 0.985 | 35–65, SSIM ≥ 0.975 | 30–55, SSIM ≥ 0.96 |
-| JPEG quality, scanned pages | – | 85 | 75 | 55 | 55 fixed | 50 fixed | 42 fixed |
-| Target DPI (trigger) | – | 300 (> 450) | 150 (> 225) | 96 (> 144) | 96 (> 144) | 96 (> 115) | 72 (> 79) |
-| Longest-side cap | – | 4200 px | 3000 px | 2000 px | 2000 px | 1800 px | 1400 px |
-| Page-relative cap | – | – | – | – | – | 2200 px wide | 1600 px wide |
-| Byte-level dedup | yes | yes | yes | yes | yes | yes | yes |
-| Deep dedup | – | – | – | – | yes | yes | yes |
-| Font merging (TrueType, Type 1) | – | – | – | – | yes | yes | yes |
-| Type 1 → CFF conversion | – | – | – | – | yes | yes | yes |
-| Zopfli | – | – | – | – | yes | yes | yes |
-| Near-gray RGB → gray | – | – | – | – | yes | yes | yes |
-| Lossless palette (≤ 256 colours) | – | – | – | – | yes | yes | yes |
-| Opaque SMask dropped, SMask PNG-predicted | – | – | – | – | yes | yes | yes |
-| Crop to visible area | – | – | – | – | no | yes | yes |
-| Scanned paper whitened | – | – | – | – | no | yes | yes |
+| | lossless | low | medium | high | extreme | extreme-max |
+|---|---|---|---|---|---|---|
+| Image re-encoding | no | JPEG / palette | JPEG / palette | JPEG / palette | JPEG / palette | JPEG / palette |
+| JPEG quality | – | 85 fixed | 75 fixed | 40–70, SSIM ≥ 0.985 | 35–65, SSIM ≥ 0.975 | 30–55, SSIM ≥ 0.96 |
+| JPEG quality, scanned pages | – | 85 | 75 | 55 fixed | 50 fixed | 42 fixed |
+| Target DPI (trigger) | – | 300 (> 450) | 150 (> 225) | 96 (> 144) | 96 (> 115) | 72 (> 79) |
+| Longest-side cap | – | 4200 px | 3000 px | 2000 px | 1800 px | 1400 px |
+| Page-relative cap | – | – | – | – | 2200 px wide | 1600 px wide |
+| Byte-level dedup | yes | yes | yes | yes | yes | yes |
+| Deep dedup | yes | yes | yes | yes | yes | yes |
+| Font merging (TrueType, Type 1) | yes | yes | yes | yes | yes | yes |
+| Type 1 → CFF conversion | yes | yes | yes | yes | yes | yes |
+| Near-gray RGB → gray | – | yes | yes | yes | yes | yes |
+| Lossless palette (≤ 256 colours) | – | yes | yes | yes | yes | yes |
+| Opaque SMask dropped, SMask PNG-predicted | – | yes | yes | yes | yes | yes |
+| Crop to visible area | – | – | – | – | yes | yes |
+| Scanned paper whitened | – | – | – | – | yes | yes |
+| Zopfli | – | – | – | – | yes | yes |
 
 How to read it: an image is only **downsampled** if its effective resolution exceeds the
 threshold in parentheses, or if it exceeds one of the caps. It is, however, **always re-encoded**
 (a raw or Flate image gains a lot from the switch to JPEG alone), at unchanged dimensions if no
 threshold is crossed.
 
-`extreme-safe` never changes what a page looks like beyond compression artifacts: no cropping, no
-paper whitening. `extreme` and `extreme-max` allow both.
+Up to `high`, a page never changes beyond compression artifacts: no cropping, no paper whitening.
+`extreme` and `extreme-max` allow both, and add Zopfli, which costs about 3× the run time for a
+few % (45 s instead of 14 s on the slide deck of §4.1).
 
-Every setting of the experimental levels can be overridden on the fly to try variants:
+The lossless passes (deep dedup, font merging, CFF) run at every level: on real documents they
+are what separates a good result from a mediocre one (slide deck of §4.1 at `medium`: 19.6 MB
+without them, 12.9 MB with them), for a few seconds at most.
+
+Every setting can be overridden on the fly to try variants:
 `--tune key=value` (keys: `dpi`, `trigger`, `quality`, `max_dim`, `page_px`, `ssim`,
 `min_quality`, `dedup`, `fonts`, `cff`, `zopfli`, `gray`, `palette`, `opaque_smask`, `crop`,
 `scan_whiten`).
@@ -78,7 +82,7 @@ background, repeated screenshot). Two levels of detection:
 
 - **Byte-level** (all levels): only merges streams that are strictly identical, dictionary
   included.
-- **After decoding** (`extreme*`): compares the *decoded* content and the dictionary minus its
+- **After decoding** (every level): compares the *decoded* content and the dictionary minus its
   encoding keys (`Filter`, `DecodeParms`, `Length`). This catches copies encoded differently and,
   by iterating, images whose only difference was the pointer to their transparency mask
   (`/SMask`): once the masks are merged, the images become identical in turn. Dictionaries with no
@@ -102,7 +106,7 @@ background, repeated screenshot). Two levels of detection:
 Exports embed a **fresh subset of the same font over and over**: Keynote/PowerPoint (through
 Quartz) once per page, LaTeX once per included PDF figure. Subsetters keep the original glyph
 identifiers and only drop what isn't used, so the subsets of one font can be merged by union. Two
-formats are handled (`extreme*`):
+formats are handled (every level):
 
 - **TrueType** (`CIDFontType2` with an `Identity` mapping, typical of slide exports), in
   `font_merge.rs`: union glyph by glyph number, touching neither page content nor width tables.
@@ -118,7 +122,7 @@ hinting programs or `/Private` dictionary), identical glyph data wherever two su
 same glyph, and no conflicting built-in encoding. Text renders **pixel-identical**: on the LaTeX
 thesis below, all 213 pages rendered at 72 dpi are the same with and without merging.
 
-**Type 1 → CFF conversion** (`extreme*`, `type1_cff.rs`). After merging, every Type 1 program is
+**Type 1 → CFF conversion** (every level, `type1_cff.rs`). After merging, every Type 1 program is
 rewritten as a CFF program (`/FontFile3` with `/Subtype /Type1C`): the same outlines, stored as
 plain, compact Type 2 charstrings instead of doubly encrypted Type 1 ones, typically 3 to 5 times
 smaller. PDF viewers accept a CFF program for a `/Type1` font dictionary, so only the font
@@ -142,22 +146,22 @@ the next), and Type3 fonts (only merged when strictly identical).
 
 ### 3.4 Image and stream encoding
 
-- **Adaptive JPEG quality** (`extreme*`): binary search for the lowest quality whose SSIM, computed
+- **Adaptive JPEG quality** (`high` and above): binary search for the lowest quality whose SSIM, computed
   against the (already resized) source image, stays above the level's threshold. The score is the
   **luma** SSIM, capped by the worst RGB channel's SSIM + 0.03: luma drives it, while damage to a
   thin coloured line (chroma subsampling) still vetoes a quality. Consequence: a fine texture may
-  get a *higher* quality than in `high`.
-- **Lossless palette** (`extreme*`): an image with ≤ 256 colours (icon, logo, diagram) is stored as
+  get a *higher* quality than a fixed one would give.
+- **Lossless palette** (every lossy level): an image with ≤ 256 colours (icon, logo, diagram) is stored as
   `Indexed` at 1/2/4/8 bits + PNG predictor + Flate, provided the result is no more than 12.5 %
   larger than the JPEG. This avoids JPEG ringing around text and flat areas.
 - **Gray**: an RGB image whose three channels never differ by more than 2 levels is stored as gray
   (no chroma to encode).
 - **Transparency masks (SMask)**: always lossless (JPEG on an alpha channel produces visible halos).
-  Resized along with their image; at `extreme*`, dropped when fully opaque, and stored with a PNG
+  Resized along with their image; at every lossy level, dropped when fully opaque, and stored with a PNG
   predictor when that is smaller.
-- **Zopfli** (`extreme*`): stronger Flate recompression of non-image streams (page content, fonts,
+- **Zopfli** (`extreme`, `extreme-max`): stronger Flate recompression of non-image streams (page content, fonts,
   forms), still readable by any viewer. Typical gain 5–8 % on those streams, at a high CPU cost
-  (hence ~45 s for `extreme` versus ~5 s for `high` on the slide deck).
+  (45 s instead of 14 s on the slide deck).
 
 ### 3.5 Under-used images (cropping)
 
@@ -169,7 +173,7 @@ is rewritten.
 
 Safeguards: only if *every* reference to the image was seen by the page walk, that walk is
 complete, and the image has no `/Mask`, no optional content (`/OC`), no structure tagging and no
-shared transparency mask. Disabled at `extreme-safe`: poppler smooths an image drawn through a
+shared transparency mask. Disabled below `extreme`: poppler smooths an image drawn through a
 Form slightly differently when zoomed far out.
 
 ### 3.6 Scanned pages
@@ -178,7 +182,7 @@ A page is treated as a scan when a single image spans at least 80 % of the page 
 60 % of its pixels are light, low-saturation "paper" whose median tone is below 254. That last
 condition keeps screenshots and digitally produced pages out: their background is exactly 255.
 
-- **Fixed JPEG quality** (all `extreme*` levels): the middle of the level's quality range, instead
+- **Fixed JPEG quality** (`high` and above): the middle of the level's quality range, instead
   of the SSIM search. SSIM rewards reproducing scanner noise and earlier JPEG artifacts, which
   pushed scans to the highest quality for no visible benefit.
 - **Paper whitening** (`extreme`, `extreme-max`): a linear levels stretch that maps the paper tone
@@ -218,6 +222,11 @@ Test PDFs for all of these: `scripts/make-test-pdfs.sh` (see `TODO.md`).
 
 ## 4. Comparison with iLovePDF
 
+> These measurements predate the current levels (2026-09-30). **Old `high`** was 96 dpi at a fixed
+> JPEG quality 55, *without* the lossless passes (deep dedup, font merging, CFF, palette…);
+> **`high`** is today's `high` (formerly `extreme-safe`); `extreme*` means `extreme` and
+> `extreme-max`.
+
 iLovePDF's strategies are not public: what follows is **inferred from its output files**. Figures
 produced with `cargo run --release -p pdfshrink-core --example analyze`. SSIM: structural
 similarity between each page's rendering and the reference's (poppler, 40 dpi, grayscale),
@@ -236,14 +245,14 @@ font subsets.
 | Original | 103.4 MB | 1 | 1 | – |
 | iLovePDF recommended | 13.5 MB | 0.9887 | 0.860 | – |
 | iLovePDF extreme | 11.1 MB | 0.9862 | 0.860 | – |
-| pdfshrink `high` | 13.6 MB | 0.9960 | 0.933 | 5 s |
-| pdfshrink `extreme-safe` | 9.1 MB | 0.9965 | 0.949 | 43 s |
+| pdfshrink old `high` | 13.6 MB | 0.9960 | 0.933 | 5 s |
+| pdfshrink `high` | 9.1 MB | 0.9965 | 0.949 | 43 s |
 | pdfshrink `extreme` | 7.6 MB | 0.9947 | 0.911 | 47 s |
 | pdfshrink `extreme-max` | 6.2 MB | 0.9911 | 0.863 | 51 s |
 
 **Where the bytes go**
 
-| Category | Original | iLovePDF rec. | iLovePDF extreme | `high` | `extreme-safe` | `extreme` | `extreme-max` |
+| Category | Original | iLovePDF rec. | iLovePDF extreme | old `high` | `high` | `extreme` | `extreme-max` |
 |---|---|---|---|---|---|---|---|
 | Images | 79.03 MB | 8.76 | 6.58 | 6.70 | 4.87 | 3.49 | 2.21 |
 | Transparency masks | 11.10 MB | 0.81 | 0.69 | 1.44 | 1.06 | 0.87 | 0.68 |
@@ -254,7 +263,7 @@ font subsets.
 
 **Images**
 
-| | Original | iLovePDF rec. | iLovePDF extreme | `high` | `extreme-safe` | `extreme` | `extreme-max` |
+| | Original | iLovePDF rec. | iLovePDF extreme | old `high` | `high` | `extreme` | `extreme-max` |
 |---|---|---|---|---|---|---|---|
 | Image objects (masks included) | 3815 | 638 | 638 | 2204 | 638 | 638 | 638 |
 | Remaining duplicates (after decoding) | 3180 | 4 | 4 | 1577 | 17 | 27 | 16 |
@@ -283,17 +292,17 @@ pixels with slightly different dictionaries.
 | Original | 1280×1000, Flate, 3.19 MB | 4000×1552, Flate, 2.19 MB | 3496×1420, Flate, 2.15 MB |
 | iLovePDF rec. | 2560×1440, 697 KB | 4000×2251, 561 KB | 2016×1365, 452 KB |
 | iLovePDF extreme | 2560×1440, 697 KB | 2400×1351, 434 KB | 1920×1080, 208 KB |
-| `high` | 2000×1328, 399 KB | 2000×1328, 399 KB (duplicate) | 2000×1354, 310 KB |
-| `extreme-safe` | 2000×1328, 525 KB³ | 2000×1354, 397 KB | 2000×1330, 381 KB |
+| old `high` | 2000×1328, 399 KB | 2000×1328, 399 KB (duplicate) | 2000×1354, 310 KB |
+| `high` | 2000×1328, 525 KB³ | 2000×1354, 397 KB | 2000×1330, 381 KB |
 | `extreme` | 1800×1015 (cropped), 342 KB | 1800×1016 (cropped), 255 KB | 1371×928, 200 KB |
 | `extreme-max` | 1400×790 (cropped), 183 KB | 1400×790 (cropped), 151 KB | 997×675, 100 KB |
 
-³ Heavier than in `high`: it is a very fine rust texture, for which `extreme-safe`'s SSIM
+³ Heavier than in old `high`: it is a very fine rust texture, for which `high`'s SSIM
 threshold requires a JPEG quality above 55.
 
 **Fonts and other embedded elements**
 
-| | Original | iLovePDF (both) | `high` | `extreme*` |
+| | Original | iLovePDF (both) | old `high` | `high`, `extreme*` |
 |---|---|---|---|---|
 | Embedded font programs | 256 (2.32 MB) | 22 (0.18 MB) | 226 (2.25 MB) | 22 (0.18 MB) |
 | Type3 font dictionaries | 870 | 654 | 870 | 654 |
@@ -309,7 +318,7 @@ font subsets (22 programs each). The size gap comes mostly from images: iLovePDF
 images larger than 2000 px, up to 6673 px, i.e. 2 to 3 times more pixels than `extreme`, while
 pdfshrink caps every image, adapts JPEG quality per image, keeps ~190 small images as lossless
 palettes and crops photos that overflow the page. pdfshrink is smaller *and* closer to the
-original at every experimental level, including on the worst page (0.911 at `extreme` vs 0.860).
+original from `high` upwards, including on the worst page (0.911 at `extreme` vs 0.860).
 
 ### 4.2 LaTeX thesis: `18635-HDR_Francesco_Sanfedino_vfinal.pdf`
 
@@ -323,14 +332,14 @@ own subsets of the Computer Modern fonts, plus vector graphics.
 | Original | 34.3 MB | 1 | 1 | – |
 | iLovePDF recommended | 6.6 MB | 0.9985 | 0.974 | – |
 | iLovePDF extreme | 5.5 MB | 0.9961 | 0.934 | – |
-| pdfshrink `high` | 9.0 MB | 0.9981 | 0.968 | 1 s |
-| pdfshrink `extreme-safe` | 5.9 MB | 0.9981 | 0.968 | 27 s |
+| pdfshrink old `high` | 9.0 MB | 0.9981 | 0.968 | 1 s |
+| pdfshrink `high` | 5.9 MB | 0.9981 | 0.968 | 27 s |
 | pdfshrink `extreme` | 5.8 MB | 0.9981 | 0.968 | 26 s |
 | pdfshrink `extreme-max` | 5.6 MB | 0.9970 | 0.943 | 27 s |
 
 **Where the bytes go**
 
-| Category | Original | iLovePDF rec. | iLovePDF extreme | `high` | `extreme-safe` | `extreme` | `extreme-max` |
+| Category | Original | iLovePDF rec. | iLovePDF extreme | old `high` | `high` | `extreme` | `extreme-max` |
 |---|---|---|---|---|---|---|---|
 | Embedded fonts | 4.98 MB | 0.94 | 0.81 | 4.12 | 1.18 | 1.18 | 1.18 |
 | Form XObjects (vector figures) | 3.13 MB | 2.58 | 2.58 | 3.13 | 2.81 | 2.81 | 2.81 |
@@ -340,7 +349,7 @@ own subsets of the Computer Modern fonts, plus vector graphics.
 
 **Images**
 
-| | Original | iLovePDF rec. | iLovePDF extreme | `high` | `extreme-safe` | `extreme` | `extreme-max` |
+| | Original | iLovePDF rec. | iLovePDF extreme | old `high` | `high` | `extreme` | `extreme-max` |
 |---|---|---|---|---|---|---|---|
 | Images (masks excluded) | 164 | 159 | 159 | 163 | 158 | 158 | 158 |
 | > 2000 px | 25 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -352,7 +361,7 @@ own subsets of the Computer Modern fonts, plus vector graphics.
 
 **Fonts**
 
-| | Original | iLovePDF rec. | iLovePDF extreme | `high` | `extreme*` |
+| | Original | iLovePDF rec. | iLovePDF extreme | old `high` | `high`, `extreme*` |
 |---|---|---|---|---|---|
 | Embedded font programs | 823 | 436 | 421 | 712 | 438 |
 | Size | 4.98 MB | 0.94 MB | 0.81 MB | 4.12 MB | 1.18 MB (1.97 MB merged but still Type 1) |
@@ -361,15 +370,15 @@ own subsets of the Computer Modern fonts, plus vector graphics.
 
 **Takeaways.** The fonts decide this document. Both tools merge subsets to about the same number
 of programs (436 vs 438) and **convert Type 1 fonts to CFF** (iLovePDF renames them `f-0-0`,
-`f-1-0`…): pdfshrink's fonts drop from 4.12 MB (`high`) to 1.97 MB with merging alone, then to
+`f-1-0`…): pdfshrink's fonts drop from 4.12 MB (old `high`) to 1.97 MB with merging alone, then to
 1.18 MB with CFF conversion. iLovePDF still ends up slightly lower (0.81–0.94 MB), mostly on the
 simple TrueType fonts (e.g. 13 Times New Roman subsets) that neither tool merges but iLovePDF
 seems to trim further. Images are on par (0.50 MB at `extreme-max` vs 0.55 MB for iLovePDF
 extreme), vector figures slightly smaller on iLovePDF's side (2.58 vs 2.81 MB). Overall,
-`extreme-safe` is clearly smaller than iLovePDF recommended at equal quality (5.9 vs 6.6 MB), and
+`high` is clearly smaller than iLovePDF recommended at equal quality (5.9 vs 6.6 MB), and
 `extreme-max` matches iLovePDF extreme (5.6 vs 5.5 MB) with a slightly better SSIM.
 Also worth noting: before a bug fix made along the way (images whose `/DecodeParms` is an
-indirect object were silently skipped), `high` produced 13.1 MB on this file; it now gives 9.0 MB.
+indirect object were silently skipped), old `high` produced 13.1 MB on this file; it now gives 9.0 MB.
 
 ### 4.3 Scanned exam: `CC1_4AL1`
 
@@ -384,8 +393,8 @@ version was produced from it too.
 |---|---|---|---|---|---|
 | Input (iLovePDF recommended) | 8.8 MB | 150 dpi, 1240×1750 | 1 | 1 | – |
 | iLovePDF extreme | 2.8 MB | 72 dpi, 595×842 | 0.899 | 0.882 | – |
-| pdfshrink `high` | 2.8 MB | 96 dpi, 794×1122 | 0.963 | 0.958 | < 1 s |
-| pdfshrink `extreme-safe` | 2.8 MB | 96 dpi | 0.963 | 0.958 | 1 s |
+| pdfshrink old `high` | 2.8 MB | 96 dpi, 794×1122 | 0.963 | 0.958 | < 1 s |
+| pdfshrink `high` | 2.8 MB | 96 dpi | 0.963 | 0.958 | 1 s |
 | pdfshrink `extreme` | 2.3 MB | 96 dpi, paper whitened | 0.933⁴ | 0.919⁴ | 1 s |
 | pdfshrink `extreme-max` | 1.3 MB | 72 dpi, paper whitened | 0.913⁴ | 0.899⁴ | 1 s |
 
@@ -394,7 +403,7 @@ as a difference even though legibility improves.
 
 **Structure**
 
-| | Input | iLovePDF extreme | `high` / `extreme-safe` | `extreme` | `extreme-max` |
+| | Input | iLovePDF extreme | old `high` / `high` | `extreme` | `extreme-max` |
 |---|---|---|---|---|---|
 | Images | 46 | 46 | 46 | 46 | 46 |
 | Encoding | JPEG in Flate, ICC colour | JPEG in Flate, RGB | JPEG, RGB | JPEG, RGB | JPEG, RGB |
@@ -402,7 +411,7 @@ as a difference even though legibility improves.
 | Image bytes | 9.23 MB | 2.88 MB | 2.94 / 2.93 MB | 2.42 MB | 1.34 MB |
 
 **Takeaways.** iLovePDF's extreme mode simply halves the resolution again (150 → 72 dpi), which
-makes handwriting visibly blurrier. At the same size, pdfshrink `high` keeps 96 dpi. `extreme`
+makes handwriting visibly blurrier. At the same size, pdfshrink old `high` keeps 96 dpi. `extreme`
 whitens the paper and uses a fixed quality suited to scans, which gives a smaller file than
 iLovePDF extreme at a higher resolution. `extreme-max` goes down to the same 72 dpi as iLovePDF
 extreme, but at under half its size. On a scan, the image *is* the page: there are no fonts or
@@ -418,7 +427,7 @@ pdfshrink used to offer an optional engine that shelled out to a Homebrew-instal
 (`-dPDFSETTINGS=/screen`, images at 96 dpi), plus a "best of both" mode keeping the smaller
 output. It was removed after this comparison (SSIM as above, worst page in parentheses):
 
-| Document | Rust `high` | Ghostscript `high` | Rust `extreme` |
+| Document | Rust old `high` | Ghostscript old `high` | Rust `extreme` |
 |---|---|---|---|
 | Slide deck rust-1 (103 MB) | 13.6 MB · 0.996 | 16.0 MB · 0.987 (0.896), 73 s | 7.6 MB · 0.995 |
 | LaTeX thesis (34 MB) | 9.0 MB · 0.998 | 5.7 MB · 0.990 (0.797) | 5.8 MB · 0.998 |
@@ -429,7 +438,7 @@ output. It was removed after this comparison (SSIM as above, worst page in paren
 | Web page export (5.5 MB) | 0.72 MB · 0.999 | 0.89 MB · 0.996 | 0.56 MB · 0.998 |
 
 Ghostscript was never both smaller and closer to the original than `extreme`. When it beat
-`high` on size, it was at a visible quality cost, which the "best of both" mode (picking the
+old `high` on size, it was at a visible quality cost, which the "best of both" mode (picking the
 smaller file) would silently accept. It also rotated some pages (its default `AutoRotatePages`
 added a `/Rotate` to one slide and two thesis pages), warned about transparency colour spaces,
 and required an external AGPL binary. What it could still do that pdfshrink can't — re-encode
