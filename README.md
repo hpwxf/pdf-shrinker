@@ -1,5 +1,7 @@
 # PdfShrinker
 
+[![CI](https://github.com/hpwxf/pdf-shrinker/actions/workflows/ci.yml/badge.svg)](https://github.com/hpwxf/pdf-shrinker/actions/workflows/ci.yml)
+
 Compresses PDFs on macOS — like iLovePDF or UPDF — shrinking file size while staying in PDF format
 (no zip). Written in Rust, Apple Silicon only.
 
