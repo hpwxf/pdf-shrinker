@@ -7,7 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A macOS PDF compressor (Rust), à la iLovePDF/UPDF, ships three ways from one Cargo workspace:
 CLI (`pdfshrink`), a Tauri GUI (`PdfShrinker.app`), and a Finder Quick Action — all going through the
 same `pdfshrink-core` compression engine so behavior never drifts between front ends. Apple Silicon
-only (`aarch64-apple-darwin`); no x86_64/universal build.
+only (`aarch64-apple-darwin`); no x86_64/universal build. Exception: `.github/workflows/windows.yml`
+(manual `workflow_dispatch` on master) builds a Windows x86_64 CLI and app (static CRT, NSIS
+installer). There, `app/src-tauri/tauri.windows.conf.json` drops the CLI sidecar and Tauri's
+`fileAssociations` (its NSIS script would take over the default PDF handler);
+`app/src-tauri/windows/pdf-open-with.nsh` registers the app as an extra "Open with" choice instead.
+The UI hides "Install integrations" (macOS-only) on Windows.
 
 ## Commands
 

@@ -52,6 +52,13 @@ pub fn install_quick_action(exec: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// Symlink `exec` as `/usr/local/bin/pdfshrink`.
+#[cfg(not(unix))]
+pub fn install_cli_symlink(_exec: &Path) -> Result<PathBuf, String> {
+    Err("only supported on macOS".into())
+}
+
+/// Symlink `exec` as `/usr/local/bin/pdfshrink`.
+#[cfg(unix)]
 pub fn install_cli_symlink(exec: &Path) -> Result<PathBuf, String> {
     let link = Path::new("/usr/local/bin/pdfshrink");
 

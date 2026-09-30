@@ -105,13 +105,25 @@ fn compress_one(path: String, opts: &CompressOptions) -> CompressResult {
     }
 }
 
+/// Shows `path` selected in Finder (macOS) or Explorer (Windows).
 #[tauri::command]
 fn reveal_in_finder(path: String) -> Result<(), String> {
-    std::process::Command::new("open")
-        .arg("-R")
-        .arg(&path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        // Explorer parses its own command line: `/select,"C:\a b.pdf"` must
+        // reach it verbatim, which std's per-argument quoting would break.
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.raw_arg(format!("/select,\"{path}\""));
+        cmd
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg("-R").arg(&path);
+        cmd
+    };
+    cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -147,7 +159,9 @@ fn install_integrations() -> InstallResult {
 }
 
 /// Files macOS hands us via "Open With…" / drag-onto-the-Dock-icon, both at
-/// cold start and while the app is already running.
+/// cold start and while the app is already running (on Windows: the argv of
+/// the first instance, or of a later one forwarded by the single-instance
+/// plugin).
 fn forward_opened_files(app: &tauri::AppHandle, urls: Vec<tauri::Url>) {
     let paths: Vec<String> = urls
         .into_iter()
@@ -165,7 +179,23 @@ fn forward_opened_files(app: &tauri::AppHandle, urls: Vec<tauri::Url>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // macOS keeps one instance per app and sends it an `odoc` event instead;
+    // Windows starts a new process per "Open with", so hand its files over to
+    // the running one and let it exit.
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+        let cwd = PathBuf::from(cwd);
+        let urls = argv
+            .iter()
+            .skip(1)
+            .filter_map(|a| tauri::Url::from_file_path(cwd.join(a)).ok())
+            .collect();
+        forward_opened_files(app, urls);
+    }));
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,

@@ -14,6 +14,11 @@ const installStatus = document.getElementById("install-status");
 const buildInfoEl = document.getElementById("build-info");
 const buildInfoTooltip = document.getElementById("build-info-tooltip");
 
+// The Quick Action and the /usr/local/bin link are macOS-only integrations.
+const IS_WINDOWS = navigator.userAgent.includes("Windows");
+installBtn.hidden = IS_WINDOWS;
+installStatus.hidden = IS_WINDOWS;
+
 /** path -> { li, detail, render() } */
 const files = new Map();
 let buildInfo = null;
@@ -141,7 +146,7 @@ function renderFileStatus(entry) {
   } else {
     entry.detail.textContent = "";
   }
-  entry.reveal.title = t("file.reveal");
+  entry.reveal.title = t(IS_WINDOWS ? "file.revealExplorer" : "file.reveal");
   // Removing a queued/running file wouldn't stop its compression: wait for it.
   const busy = s.kind === "queued" || s.kind === "running";
   entry.remove.disabled = busy;

@@ -41,6 +41,7 @@
         "name": "PDF Document",
         "description": "PDF Document",
         "role": "Viewer",
+        "rank": "Alternate",
         "mimeType": "application/pdf"
       }
     ],

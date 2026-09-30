@@ -49,6 +49,7 @@ window.I18N = (() => {
         notSmaller: "already optimal",
         failed: "failed",
         reveal: "Show in Finder",
+        revealExplorer: "Show in Explorer",
         remove: "Remove from the list",
       },
       install: {
@@ -112,6 +113,7 @@ window.I18N = (() => {
         notSmaller: "déjà optimal",
         failed: "échec",
         reveal: "Afficher dans le Finder",
+        revealExplorer: "Afficher dans l'Explorateur",
         remove: "Retirer de la liste",
       },
       install: {

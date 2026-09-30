@@ -1,0 +1,97 @@
+name: Windows
+
+# Manual-only build of Windows x86_64 binaries from master:
+# - a stand-alone `pdfshrink.exe` CLI,
+# - the Tauri app, as a portable `.exe` and an NSIS installer.
+# Static CRT so nothing needs the Visual C++ redistributable; the app still
+# needs WebView2, preinstalled on Windows 10/11 (the installer fetches it if
+# missing). The Quick Action and the CLI symlink stay macOS-only, so the app
+# has no sidecar on Windows, and the installer registers no file association
+# (see app/src-tauri/tauri.windows.conf.json).
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C target-feature=+crt-static
+  TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  cli:
+    name: build pdfshrink.exe
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      # mozjpeg-sys assembles its SIMD code with nasm.
+      - uses: ilammy/setup-nasm@v1
+
+      - name: cargo test (core)
+        run: cargo test -p pdfshrink-core --target ${{ env.TARGET }} --locked
+
+      - name: Build the CLI
+        run: cargo build --release -p pdfshrink-cli --target ${{ env.TARGET }} --locked
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          exe=target/$TARGET/release/pdfshrink.exe
+          "$exe" --version
+          cargo run --release -p pdfshrink-core --target $TARGET --locked --example make_fixture -- fixture.pdf
+          "$exe" -l medium fixture.pdf
+          test -f fixture-compressed.pdf
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pdfshrink-cli-windows-x86_64
+          path: target/${{ env.TARGET }}/release/pdfshrink.exe
+          if-no-files-found: error
+
+  app:
+    name: build PdfShrinker app
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: ilammy/setup-nasm@v1
+
+      - name: Cache tauri-cli
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-2-${{ runner.os }}-${{ runner.arch }}
+
+      # Built without the static-CRT RUSTFLAGS: it's a build tool, not shipped.
+      - name: Install tauri-cli
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        env:
+          RUSTFLAGS: ""
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build the app + NSIS installer
+        working-directory: app
+        run: cargo tauri build --target ${{ env.TARGET }} --bundles nsis -- --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PdfShrinker-windows-x86_64
+          path: |
+            target/${{ env.TARGET }}/release/pdfshrinker-app.exe
+            target/${{ env.TARGET }}/release/bundle/nsis/*.exe
+          if-no-files-found: error
