@@ -5,3 +5,4 @@
 *.dmg
 .DS_Store
 .idea/
+/.mcp.json
