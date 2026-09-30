@@ -3,6 +3,8 @@ name: CI
 # Apple Silicon only, matching the project itself (aarch64-apple-darwin, no
 # x86_64/universal build — see CLAUDE.md) — so this only ever runs on macOS
 # runners, no Linux/Windows matrix.
+# The .app/.dmg and Windows builds are separate, manual-only workflows
+# (macos.yml, windows.yml).
 
 on:
   push:
@@ -44,36 +46,3 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace --locked
-
-  build-app:
-    name: build .app + .dmg
-    runs-on: macos-14
-    needs: check
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Cache tauri-cli
-        id: cache-tauri-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-2-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install tauri-cli
-        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --version "^2" --locked
-
-      - name: Build .app + .dmg (ad-hoc signed)
-        run: ./scripts/build-dmg.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: PdfShrinker-dmg
-          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-          if-no-files-found: error

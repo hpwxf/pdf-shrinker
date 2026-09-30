@@ -1,0 +1,44 @@
+name: macOS
+
+# Manual-only build of the ad-hoc signed PdfShrinker.app + .dmg from master
+# (Apple Silicon). Pushes and PRs only run the checks in ci.yml.
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-app:
+    name: build .app + .dmg
+    if: github.ref == 'refs/heads/master'
+    runs-on: macos-14 # arm64 (Apple Silicon) runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache tauri-cli
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install tauri-cli
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build .app + .dmg (ad-hoc signed)
+        run: ./scripts/build-dmg.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PdfShrinker-dmg
+          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
