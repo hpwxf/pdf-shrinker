@@ -224,8 +224,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building the tauri application")
         .run(|app_handle, event| {
+            // Only macOS has the `odoc` event; Windows goes through argv and
+            // the single-instance plugin above.
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = event {
                 forward_opened_files(app_handle, urls);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
         });
 }
