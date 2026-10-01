@@ -10,7 +10,7 @@ Three ways to use it:
 - **From the command line** (`pdfshrink`)
 - **A macOS app** (`PdfShrinker.app`, installable via `.dmg`), which shows up in Finder › right-click
   a PDF › **Open With**
-- **A Finder Quick Action** (right-click a PDF › **Quick Actions** › PdfShrinker), which compresses
+- **A Finder service** (right-click a PDF › **Services** › PdfShrinker), which compresses
   immediately at whatever default level is set in the app
 
 Four compression levels: **Lossless** (structural cleanup only), **Low**, **Medium** (default),
@@ -23,12 +23,13 @@ Download the `.dmg` (see [Build](#build) to produce it yourself), open it, drag 
 `Applications`. The app isn't signed with an Apple Developer account (ad-hoc signature only), so
 Gatekeeper will warn on first launch — right-click the app › **Open**.
 
-On first launch, the **"Install the Quick Action and command-line tool"** button in the app:
+On first launch, the **"Install the Finder service and command-line tool"** button in the app:
 
-- installs the Finder Quick Action (`~/Library/Services`);
-- creates the `/usr/local/bin/pdfshrink` symlink pointing at the CLI bundled inside the app.
+- installs the Finder service (`~/Library/Services`);
+- creates a `pdfshrink` symlink pointing at the CLI bundled inside the app, in `/usr/local/bin`
+  if that directory is writable (it is `root:wheel` on a stock macOS) and otherwise in `~/.local/bin`.
 
-(Command-line equivalent: `pdfshrink install --quick-action --cli-link`.)
+(Command-line equivalent: `pdfshrink install --finder-service --cli-link`.)
 
 ## Usage
 
@@ -54,13 +55,18 @@ it).
 ### App
 
 Drag PDFs into the window (or right-click a PDF › **Open With** › PdfShrinker), pick a level, hit
-**Compress**. The **"Set as default level"** checkbox also changes what the Quick Action does, since
-both read the same setting.
+**Compress**. The **"Set as default level"** checkbox also changes what the Finder service does,
+since both read the same setting.
 
-### Quick Action
+### Finder service
 
-Right-click one or more PDFs in Finder › **Quick Actions** › **PdfShrinker**. Compresses immediately
-at the app's default level, then shows a macOS notification.
+Right-click one or more PDFs in Finder › **Services** › **PdfShrinker**. Compresses immediately at
+the app's default level, then shows a macOS notification.
+
+It is *not* in the **Quick Actions** submenu, and it does not appear in System Settings › General ›
+Login Items & Extensions › Finder. That submenu and that list are fed only by Action extensions
+(`.appex`) and Shortcuts; as of macOS 26 an Automator `.workflow` — which is what this is — can only
+ever land under **Services**.
 
 ## Build
 

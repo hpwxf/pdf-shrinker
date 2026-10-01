@@ -25,7 +25,7 @@ struct Cli {
     #[arg(short = 'l', long, value_name = "LEVEL")]
     level: Option<String>,
 
-    /// Also show a macOS notification for each file (used by the Quick Action).
+    /// Also show a macOS notification for each file (used by the Finder service).
     #[arg(long)]
     notify: bool,
 
@@ -45,17 +45,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Read or change a persisted default (used by every front end: this CLI, the app, the Quick Action).
+    /// Read or change a persisted default (used by every front end: this CLI, the app, the Finder service).
     Config {
         #[command(subcommand)]
         action: ConfigAction,
     },
-    /// Install the Finder Quick Action and/or a `pdfshrink` symlink on the PATH.
+    /// Install the Finder service and/or a `pdfshrink` symlink on the PATH.
     Install {
-        /// Install the "PdfShrinker" Quick Action into Finder's right-click menu.
-        #[arg(long)]
-        quick_action: bool,
-        /// Symlink this binary as /usr/local/bin/pdfshrink.
+        /// Install the "PdfShrinker" service into Finder's right-click Services menu.
+        #[arg(long, alias = "quick-action")]
+        finder_service: bool,
+        /// Symlink this binary as `pdfshrink` in /usr/local/bin (or ~/.local/bin).
         #[arg(long)]
         cli_link: bool,
     },
@@ -83,9 +83,9 @@ fn main() -> ExitCode {
     match &cli.command {
         Some(Command::Config { action }) => run_config(action),
         Some(Command::Install {
-            quick_action,
+            finder_service,
             cli_link,
-        }) => install::run(*quick_action, *cli_link),
+        }) => install::run(*finder_service, *cli_link),
         None => run_compress(cli),
     }
 }

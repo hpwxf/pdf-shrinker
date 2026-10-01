@@ -5,7 +5,7 @@ name: Windows
 # - the Tauri app, as a portable `.exe` and an NSIS installer.
 # Static CRT so nothing needs the Visual C++ redistributable; the app still
 # needs WebView2, preinstalled on Windows 10/11 (the installer fetches it if
-# missing). The Quick Action and the CLI symlink stay macOS-only, so the app
+# missing). The Finder service and the CLI symlink stay macOS-only, so the app
 # has no sidecar on Windows, and the installer registers no file association
 # (see app/src-tauri/tauri.windows.conf.json).
 

@@ -53,12 +53,12 @@ window.I18N = (() => {
         remove: "Remove from the list",
       },
       install: {
-        button: "Install the Quick Action and command-line tool…",
+        button: "Install the Finder service and command-line tool…",
         installing: "Installing…",
-        quickActionLabel: "Quick Action",
-        quickActionOk: "Quick Action installed",
+        serviceLabel: "Finder service",
+        serviceOk: "Finder service installed — right-click a PDF › Services › PdfShrinker",
         cliLabel: "Command-line tool",
-        cliOk: "command-line tool installed (/usr/local/bin/pdfshrink)",
+        cliOk: "command-line tool installed ({path})",
         itemFailed: "{label}: failed ({error})",
       },
       lang: {
@@ -117,12 +117,12 @@ window.I18N = (() => {
         remove: "Retirer de la liste",
       },
       install: {
-        button: "Installer l'Action rapide et l'outil en ligne de commande…",
+        button: "Installer le service Finder et l'outil en ligne de commande…",
         installing: "Installation…",
-        quickActionLabel: "Action rapide",
-        quickActionOk: "Action rapide installée",
+        serviceLabel: "Service Finder",
+        serviceOk: "Service Finder installé — clic droit sur un PDF › Services › PdfShrinker",
         cliLabel: "Outil en ligne de commande",
-        cliOk: "outil en ligne de commande installé (/usr/local/bin/pdfshrink)",
+        cliOk: "outil en ligne de commande installé ({path})",
         itemFailed: "{label} : échec ({error})",
       },
       lang: {

@@ -306,6 +306,11 @@ footer {
 .status {
   margin: 4px 0 0;
   color: var(--muted);
+  /* The body sets `user-select: none` (an app chrome, not a document); this
+     line can carry a path or a shell command the user needs to copy. */
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
 }
 
 .build-info {

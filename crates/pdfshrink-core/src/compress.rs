@@ -8,7 +8,7 @@ use crate::level::{Level, Profile};
 use crate::rust_engine::RustEngine;
 
 /// How hard to compress. `Default` pulls from the persisted [`Config`], which
-/// is how the CLI, the GUI and the Quick Action all end up agreeing on "the
+/// is how the CLI, the GUI and the Finder service all end up agreeing on "the
 /// default level" without talking to each other directly.
 #[derive(Debug, Clone, Copy)]
 pub struct CompressOptions {

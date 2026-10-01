@@ -14,7 +14,7 @@ const installStatus = document.getElementById("install-status");
 const buildInfoEl = document.getElementById("build-info");
 const buildInfoTooltip = document.getElementById("build-info-tooltip");
 
-// The Quick Action and the /usr/local/bin link are macOS-only integrations.
+// The Finder service and the PATH symlink are macOS-only integrations.
 const IS_WINDOWS = navigator.userAgent.includes("Windows");
 installBtn.hidden = IS_WINDOWS;
 installStatus.hidden = IS_WINDOWS;
@@ -324,13 +324,15 @@ installBtn.addEventListener("click", async () => {
   installStatus.textContent = t("install.installing");
   try {
     const result = await core.invoke("install_integrations");
-    const describe = (label, okLabel, outcome) => {
+    const describe = (label, okKey, outcome) => {
       if (!outcome) return null;
-      return outcome.Ok !== undefined ? okLabel : t("install.itemFailed", { label, error: outcome.Err ?? "" });
+      return outcome.Ok !== undefined
+        ? t(okKey, { path: outcome.Ok })
+        : t("install.itemFailed", { label, error: outcome.Err ?? "" });
     };
     installStatus.textContent = [
-      describe(t("install.quickActionLabel"), t("install.quickActionOk"), result.quick_action),
-      describe(t("install.cliLabel"), t("install.cliOk"), result.cli_link),
+      describe(t("install.serviceLabel"), "install.serviceOk", result.finder_service),
+      describe(t("install.cliLabel"), "install.cliOk", result.cli_link),
     ]
       .filter(Boolean)
       .join(" · ");

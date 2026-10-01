@@ -2,13 +2,13 @@
 
 use std::process::ExitCode;
 
-pub fn run(quick_action: bool, cli_link: bool) -> ExitCode {
+pub fn run(finder_service: bool, cli_link: bool) -> ExitCode {
     // With neither flag, do both — that's what a first run from a freshly
     // installed app should do.
-    let (quick_action, cli_link) = if !quick_action && !cli_link {
+    let (finder_service, cli_link) = if !finder_service && !cli_link {
         (true, true)
     } else {
-        (quick_action, cli_link)
+        (finder_service, cli_link)
     };
 
     let exec = match pdfshrink_core::integration::resolve_exec_path() {
@@ -21,11 +21,14 @@ pub fn run(quick_action: bool, cli_link: bool) -> ExitCode {
 
     let mut ok = true;
 
-    if quick_action {
-        match pdfshrink_core::integration::install_quick_action(&exec) {
-            Ok(path) => println!("Quick Action installed: {}", path.display()),
+    if finder_service {
+        match pdfshrink_core::integration::install_finder_service(&exec) {
+            Ok(path) => println!(
+                "Finder service installed: {} (right-click a PDF in Finder \u{203a} Services \u{203a} PdfShrinker)",
+                path.display()
+            ),
             Err(e) => {
-                eprintln!("pdfshrink: could not install the Quick Action: {e}");
+                eprintln!("pdfshrink: could not install the Finder service: {e}");
                 ok = false;
             }
         }
@@ -33,7 +36,13 @@ pub fn run(quick_action: bool, cli_link: bool) -> ExitCode {
 
     if cli_link {
         match pdfshrink_core::integration::install_cli_symlink(&exec) {
-            Ok(path) => println!("Command-line symlink installed: {}", path.display()),
+            Ok(path) => {
+                println!("Command-line symlink installed: {}", path.display());
+                let dir = path.parent().unwrap_or(&path);
+                if !pdfshrink_core::integration::is_on_path(dir) {
+                    println!("note: {} is not on your PATH — add it to use `pdfshrink` directly.", dir.display());
+                }
+            }
             Err(e) => {
                 eprintln!("pdfshrink: could not install the command-line symlink: {e}");
                 ok = false;

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A macOS PDF compressor (Rust), à la iLovePDF/UPDF, ships three ways from one Cargo workspace:
-CLI (`pdfshrink`), a Tauri GUI (`PdfShrinker.app`), and a Finder Quick Action — all going through the
+CLI (`pdfshrink`), a Tauri GUI (`PdfShrinker.app`), and a Finder service — all going through the
 same `pdfshrink-core` compression engine so behavior never drifts between front ends. Apple Silicon
 only (`aarch64-apple-darwin`); no x86_64/universal build. Exception: `.github/workflows/windows.yml`
 (manual `workflow_dispatch` on master) builds a Windows x86_64 CLI and app (static CRT, NSIS
@@ -27,7 +27,7 @@ cargo clippy -p pdfshrink-core --all-targets
 cargo build -p pdfshrink-cli
 cargo run -p pdfshrink-cli -- -l medium file.pdf
 cargo run -p pdfshrink-cli -- config get level
-cargo run -p pdfshrink-cli -- install --quick-action --cli-link   # writes to ~/Library/Services and /usr/local/bin — real side effects, don't run from CI/agents without asking
+cargo run -p pdfshrink-cli -- install --finder-service --cli-link   # writes to ~/Library/Services and /usr/local/bin (or ~/.local/bin) — real side effects, don't run from CI/agents without asking
 
 # Generate a throwaway test PDF (oversized JPEG on one page) instead of needing a real file
 cargo run -p pdfshrink-core --example make_fixture -- /path/to/out.pdf
@@ -148,11 +148,12 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   the walk was `complete` and every reference to the image came from a walked `/XObject` dict.
 - `config.rs`: `Config` (default level) persisted at
   `~/Library/Application Support/com.haveneer.pdfshrinker/config.toml`. This is the single source of
-  truth the CLI, the app and the Quick Action all read — the app's "set as default" checkbox writing
-  here is what makes the (single, level-less) Quick Action follow the app's chosen default.
-- `integration.rs`: installs the Finder Quick Action (fills in the `packaging/PdfShrinker.workflow`
-  template via `include_str!` and writes it to `~/Library/Services`) and the `/usr/local/bin/pdfshrink`
-  symlink. Shared verbatim by `pdfshrink-cli`'s `install` subcommand and the app's "Install
+  truth the CLI, the app and the Finder service all read — the app's "set as default" checkbox writing
+  here is what makes the (single, level-less) service follow the app's chosen default.
+- `integration.rs`: installs the Finder service (fills in the `packaging/PdfShrinker.workflow`
+  template via `include_str!` and writes it to `~/Library/Services`) and the `pdfshrink` symlink —
+  `/usr/local/bin` when writable, else `~/.local/bin` (`/usr/local/bin` is `root:wheel` on a stock
+  macOS, so the GUI app can never write there; failing outright is useless to the user). Shared verbatim by `pdfshrink-cli`'s `install` subcommand and the app's "Install
   integrations" button — `resolve_exec_path()` points both at the *bundled* CLI (`Contents/MacOS/pdfshrink`,
   the `externalBin` sidecar without its target-triple suffix) when running inside `PdfShrinker.app`, so
   they keep working across app updates instead of pinning today's exact process path.
@@ -160,10 +161,10 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
 ### `crates/pdfshrink-cli`
 
 `clap` derive; `pdfshrink [-l LEVEL] [--tune K=V] [--suffix S] [-j N] [--notify] FILES...` plus `config get/set` and
-`install --quick-action --cli-link` subcommands. Files are compressed in parallel with `rayon`. Exit
+`install --finder-service --cli-link` subcommands (`--quick-action` kept as an alias). Files are compressed in parallel with `rayon`. Exit
 codes: `0` success, `1` any error, `2` any file was already optimal (checked after all files, so a
 mix of outcomes still surfaces the most severe code). `--notify` shells out to `osascript` — used by
-the Quick Action so a background compression still tells the user something happened.
+the Finder service so a background compression still tells the user something happened.
 
 ### `app/` — the GUI
 
@@ -175,23 +176,34 @@ static HTML/CSS/JS with **no npm/bundler** — `withGlobalTauri: true` in `tauri
 specifically so `app.js` can call `window.__TAURI__.core.invoke(...)` / `.event.listen(...)` directly.
 Rust commands in `app/src-tauri/src/lib.rs` (`compress_files`, `get_config`, `set_default_level`,
 `reveal_in_finder`, `install_integrations`) call straight into `pdfshrink-core`
-— the app does not shell out to its own CLI sidecar for compression, only the Quick Action does that.
+— the app does not shell out to its own CLI sidecar for compression, only the Finder service does that.
 `compress_files` is `async` and runs the batch in `spawn_blocking` (a sync command would run on the
 main thread and freeze the webview — no repaint, no scrolling); it emits `compress-started` then
 `compress-result` per file rather than returning a batch, so each one-line row in the file list
 shows pending → queued → running → done/error as it happens. "Compress all" runs every pending or
 failed file; a row's status button (re)runs just that file.
 
-### `packaging/PdfShrinker.workflow` — the Quick Action template
+### `packaging/PdfShrinker.workflow` — the Finder service template
 
 A hand-authored Automator "Service" bundle (`Info.plist` + `document.wflow`, an Automator "Run Shell
 Script" action with `inputMethod=1` i.e. "as arguments", so the script sees selected Finder PDFs as
-`"$@"`). `__PDFSHRINK_EXEC__` in `document.wflow` is filled in by `integration::install_quick_action`
-at install time with the real path to the bundled CLI. **This template was hand-written and has not
-been round-tripped through Automator.app itself** (no GUI available while building this) — the
-individual pieces (build, packaging, code signing, file associations, launch-with-argv, `RunEvent::Opened`)
-were each verified to work; the Quick Action XML specifically should get one manual check (install it,
-right-click a PDF in Finder → Quick Actions → PdfShrinker) before relying on it.
+`"$@"`). `__PDFSHRINK_EXEC__` in `document.wflow` is filled in by `integration::install_finder_service`
+at install time with the real path to the bundled CLI. It was hand-written rather than round-tripped
+through Automator.app (no GUI while building this), so its `workflowMetaData` was aligned key-for-key
+against a known-good Automator-produced workflow; verified end to end with
+`automator -i file.pdf ~/Library/Services/PdfShrinker.workflow`, which is the way to test it without
+clicking through Finder.
+
+**It lands in the contextual menu's *Services* submenu, never "Quick Actions".** As of macOS 26 that
+submenu — and the Finder list in System Settings → General → Login Items & Extensions — is fed only by
+Action extensions (`.appex` with `NSExtensionPointIdentifier` `com.apple.ui-services`, the way
+ImageOptim does it) and by Shortcuts; no Automator `.workflow` appears in either, whoever wrote it.
+A real "Quick Actions" entry would mean shipping an `.appex` in `Contents/PlugIns/` — a separate
+Swift/AppKit target outside cargo, built and signed by `scripts/build-dmg.sh`. Deliberately not done;
+that's why everything the user reads says "Finder service". Useful probes when this misbehaves:
+`/System/Library/CoreServices/pbs -dump_pboard | grep -A12 pdfshrinker` (is it registered at all?),
+`/System/Library/CoreServices/pbs -update -flush`, and `defaults read pbs` (`FinderActive` lists the
+`.appex`/Shortcuts quick actions, and only those).
 
 ### `scripts/build-dmg.sh`
 

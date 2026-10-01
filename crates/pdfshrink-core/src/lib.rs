@@ -1,5 +1,5 @@
 //! Core compression logic for PdfShrinker: shared by the CLI, the Tauri app and
-//! the Finder Quick Action.
+//! the Finder service.
 //!
 //! [`compress_file`] is the single entry point every front end should call.
 

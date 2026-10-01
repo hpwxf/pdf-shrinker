@@ -129,7 +129,7 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
 
 #[derive(Clone, Serialize)]
 struct InstallResult {
-    quick_action: Option<Result<String, String>>,
+    finder_service: Option<Result<String, String>>,
     cli_link: Option<Result<String, String>>,
 }
 
@@ -140,20 +140,20 @@ fn install_integrations() -> InstallResult {
         Err(e) => {
             let msg = Err(e.to_string());
             return InstallResult {
-                quick_action: Some(msg.clone()),
+                finder_service: Some(msg.clone()),
                 cli_link: Some(msg),
             };
         }
     };
 
-    let quick_action = pdfshrink_core::integration::install_quick_action(&exec)
+    let finder_service = pdfshrink_core::integration::install_finder_service(&exec)
         .map(|p| p.display().to_string())
         .map_err(|e| e.to_string());
     let cli_link =
         pdfshrink_core::integration::install_cli_symlink(&exec).map(|p| p.display().to_string());
 
     InstallResult {
-        quick_action: Some(quick_action),
+        finder_service: Some(finder_service),
         cli_link: Some(cli_link),
     }
 }

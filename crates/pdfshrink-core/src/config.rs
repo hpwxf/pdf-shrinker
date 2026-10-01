@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::level::Level;
 use crate::{PdfShrinkError, Result};
 
-/// Persisted user preferences, shared by the CLI, the GUI and the Quick Action.
+/// Persisted user preferences, shared by the CLI, the GUI and the Finder service.
 ///
-/// This is the single source of truth for the "default level" the Quick Action
-/// uses: the GUI writes it, the CLI and the Quick Action read it. Unknown keys
+/// This is the single source of truth for the "default level" the Finder
+/// service uses: the GUI writes it, the CLI and the service read it. Unknown keys
 /// are ignored, so a config written by an older version (which also stored an
 /// `engine`) still loads.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
