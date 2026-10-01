@@ -40,7 +40,10 @@ pub fn run(finder_service: bool, cli_link: bool) -> ExitCode {
                 println!("Command-line symlink installed: {}", path.display());
                 let dir = path.parent().unwrap_or(&path);
                 if !pdfshrink_core::integration::is_on_path(dir) {
-                    println!("note: {} is not on your PATH — add it to use `pdfshrink` directly.", dir.display());
+                    println!(
+                        "note: {} is not on your PATH — add it to use `pdfshrink` directly.",
+                        dir.display()
+                    );
                 }
             }
             Err(e) => {

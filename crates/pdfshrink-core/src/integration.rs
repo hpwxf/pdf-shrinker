@@ -75,7 +75,9 @@ pub fn install_finder_service(exec: &Path) -> std::io::Result<PathBuf> {
     // on top of `-update` matters on a *re*install: without it the cached
     // service (with the previous exec path) can stay live until logout.
     for arg in ["-update", "-flush"] {
-        let _ = Command::new("/System/Library/CoreServices/pbs").arg(arg).output();
+        let _ = Command::new("/System/Library/CoreServices/pbs")
+            .arg(arg)
+            .output();
     }
 
     Ok(bundle_dir)
@@ -96,7 +98,10 @@ pub fn install_cli_symlink(_exec: &Path) -> Result<PathBuf, String> {
 /// directory is actually on `PATH`.
 #[cfg(unix)]
 pub fn install_cli_symlink(exec: &Path) -> Result<PathBuf, String> {
-    let candidates = [PathBuf::from("/usr/local/bin"), home_dir().join(".local/bin")];
+    let candidates = [
+        PathBuf::from("/usr/local/bin"),
+        home_dir().join(".local/bin"),
+    ];
 
     let mut first_error = None;
     for dir in &candidates {
