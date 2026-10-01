@@ -13,8 +13,8 @@ Three ways to use it:
 - **A Finder service** (right-click a PDF › **Services** › PdfShrinker), which compresses
   immediately at whatever default level is set in the app
 
-Four compression levels: **Lossless** (structural cleanup only), **Low**, **Medium** (default),
-**High**. The compressed file is written next to the original (`name-compressed.pdf`); the original is
+Six compression levels: **Lossless** (structural cleanup only), **Low**, **Medium** (default),
+**High**, **Extreme**, **Extreme-max**. The compressed file is written next to the original (`name-compressed.pdf`); the original is
 never touched, and if the result isn't actually smaller, nothing is written.
 
 ## Installation
