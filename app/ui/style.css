@@ -352,6 +352,10 @@ footer {
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-line;
+  /* Version/commit text is meant to be copied into bug reports. */
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
 }
 
