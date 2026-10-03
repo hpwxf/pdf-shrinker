@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{Emitter, Manager};
@@ -162,6 +163,23 @@ fn install_integrations() -> InstallResult {
 /// cold start and while the app is already running (on Windows: the argv of
 /// the first instance, or of a later one forwarded by the single-instance
 /// plugin).
+/// Files received before the webview registered its `opened-files` listener
+/// (cold start: the `odoc` event beats the page's JS). Drained by `frontend_ready`.
+#[derive(Default)]
+struct OpenedFiles {
+    ready: bool,
+    pending: Vec<String>,
+}
+
+/// Called by the UI once its `opened-files` listener is registered: returns
+/// what arrived earlier and switches to live emission.
+#[tauri::command]
+fn frontend_ready(state: tauri::State<'_, Mutex<OpenedFiles>>) -> Vec<String> {
+    let mut s = state.lock().unwrap();
+    s.ready = true;
+    std::mem::take(&mut s.pending)
+}
+
 fn forward_opened_files(app: &tauri::AppHandle, urls: Vec<tauri::Url>) {
     let paths: Vec<String> = urls
         .into_iter()
@@ -174,7 +192,14 @@ fn forward_opened_files(app: &tauri::AppHandle, urls: Vec<tauri::Url>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_focus();
     }
-    let _ = app.emit("opened-files", &paths);
+    let state = app.state::<Mutex<OpenedFiles>>();
+    let mut s = state.lock().unwrap();
+    if s.ready {
+        drop(s);
+        let _ = app.emit("opened-files", &paths);
+    } else {
+        s.pending.extend(paths);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -197,7 +222,9 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_dialog::init())
+        .manage(Mutex::new(OpenedFiles::default()))
         .invoke_handler(tauri::generate_handler![
+            frontend_ready,
             get_config,
             get_build_info,
             set_default_level,

@@ -293,7 +293,11 @@ event.listen("tauri://drag-drop", (e) => {
   addFiles(e.payload.paths ?? []);
 });
 
-event.listen("opened-files", (e) => addFiles(e.payload ?? []));
+// Listener first, then ask for files that arrived before it existed (cold start).
+event
+  .listen("opened-files", (e) => addFiles(e.payload ?? []))
+  .then(() => core.invoke("frontend_ready"))
+  .then((paths) => paths.length && addFiles(paths));
 
 event.listen("compress-started", (e) => {
   const entry = files.get(e.payload);
