@@ -239,7 +239,10 @@ and `app/ui/i18n.js` copied as-is (web-only strings live under `web.*` in `i18n.
 runs in one module Web Worker, one job at a time; a Rust panic aborts the module (no unwinding in
 wasm, so `catch_unwind` doesn't help), the worker reports `crashed` and the page replaces it.
 Results are offered as Blob downloads (`<name>-compressed.pdf` or `<name>-<level>.pdf`). The JPEG
-warning under the level hint shows whenever a selected level `differs_from_desktop`.
+warning under the level hint shows whenever a selected level `differs_from_desktop`. `.github/workflows/pages.yml` (manual `workflow_dispatch`, master only, Linux runner) runs
+the pure-Rust core tests, builds `web/dist`, smoke-tests it in Node (`web/smoke-test.mjs` compresses
+the `make_fixture` PDF at every level) and deploys it to GitHub Pages (https://hpwxf.github.io/pdf-shrinker/) — the repo's Pages source must
+be set to "GitHub Actions" once.
 
 ### `packaging/PdfShrinker.workflow` — the Finder service template
 

@@ -12,8 +12,9 @@ Four ways to use it:
   a PDF › **Open With**
 - **A Finder service** (right-click a PDF › **Services** › PdfShrinker), which compresses
   immediately at whatever default level is set in the app
-- **A web page** (`web/`), where the same engine, compiled to WebAssembly, runs entirely in the
-  browser: the server only serves static files and the PDFs never leave the computer
+- **A web page** (`web/`, online at **<https://hpwxf.github.io/pdf-shrinker/>**), where the same engine, compiled to WebAssembly,
+  runs entirely in the browser: the server only serves static files and the PDFs never leave the
+  computer
 
 The same `test.pdf` at every level, in each front end:
 
@@ -94,7 +95,7 @@ since both read the same setting.
 
 ### Web version
 
-Same list, levels and "Compare all levels" as the app; each result is downloaded instead of
+Open <https://hpwxf.github.io/pdf-shrinker/>. Same list, levels and "Compare all levels" as the app; each result is downloaded instead of
 written next to the original. It can't use mozjpeg (a C library) in the browser and re-encodes
 JPEGs with a pure-Rust encoder instead, so files from levels that re-encode images are usually
 bigger than the app's — the page says so above the level. Images are processed one after another,
@@ -127,6 +128,11 @@ cargo build --release -p pdfshrink-cli
 ./scripts/build-web.sh
 python3 -m http.server -d web/dist 8000
 ```
+
+The web version is published to GitHub Pages, at <https://hpwxf.github.io/pdf-shrinker/>.
+
+<!-- Maintainers: deployed on demand — Actions › "Web version (GitHub Pages)" › Run workflow, from
+master (.github/workflows/pages.yml). One-time setup: Settings › Pages › Source: "GitHub Actions". -->
 
 See [`CLAUDE.md`](CLAUDE.md) for the detailed architecture (compression engine, effective-DPI
 calculation for images, Tauri app structure, etc.), development commands (`cargo test`,

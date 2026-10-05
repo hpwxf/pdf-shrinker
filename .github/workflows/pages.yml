@@ -1,0 +1,76 @@
+name: Web version (GitHub Pages)
+
+# Manual-only deployment of the web version (crates/pdfshrink-wasm + web/,
+# see CLAUDE.md) to GitHub Pages, from master. The page is a static site:
+# compression runs in the visitor's browser, nothing is uploaded anywhere.
+#
+# One-time setup: Settings › Pages › Build and deployment › Source: "GitHub
+# Actions". The site is then at https://hpwxf.github.io/pdf-shrinker/
+#
+# Linux runner: the core is built without its `native` feature (no mozjpeg,
+# no C code), so nothing here is macOS-specific.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer run doesn't cancel one in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build web/dist
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The CLI must match the wasm-bindgen crate version in Cargo.lock
+      # exactly. Cached in ~/.cargo/bin by rust-cache.
+      - name: Install wasm-bindgen-cli
+        run: |
+          version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3 }' Cargo.lock)
+          if ! wasm-bindgen --version 2>/dev/null | grep -qx "wasm-bindgen $version"; then
+            cargo install wasm-bindgen-cli --version "$version" --locked
+          fi
+
+      - name: cargo test (core, pure Rust)
+        run: cargo test -p pdfshrink-core --no-default-features --locked
+
+      - name: Build web/dist
+        run: ./scripts/build-web.sh
+
+      - name: Smoke test the module in Node
+        run: |
+          cargo run --release -p pdfshrink-core --no-default-features --locked --example make_fixture -- fixture.pdf
+          node web/smoke-test.mjs web/dist fixture.pdf
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    name: deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
