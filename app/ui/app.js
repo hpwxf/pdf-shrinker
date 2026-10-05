@@ -5,6 +5,22 @@ const levelSelect = document.getElementById("level-select");
 const levelHint = document.getElementById("level-hint");
 const setDefaultCheckbox = document.getElementById("set-default");
 const compareAllCheckbox = document.getElementById("compare-all");
+const parallelCheckbox = document.getElementById("parallel");
+
+// "Run in parallel" is remembered per viewer, like the language.
+const PARALLEL_KEY = "pdfshrinker.parallel";
+try {
+  parallelCheckbox.checked = localStorage.getItem(PARALLEL_KEY) === "1";
+} catch {
+  // localStorage can throw (blocked site data): default off.
+}
+parallelCheckbox.addEventListener("change", () => {
+  try {
+    localStorage.setItem(PARALLEL_KEY, parallelCheckbox.checked ? "1" : "0");
+  } catch {
+    // Best effort only.
+  }
+});
 const compressBtn = document.getElementById("compress-btn");
 const clearBtn = document.getElementById("clear-btn");
 const pickFilesBtn = document.getElementById("pick-files");
@@ -253,8 +269,8 @@ function setState(entry, state) {
 }
 
 /**
- * Compresses `paths` (in order, one at a time) at the selected level, or at
- * every level when "compare all levels" is ticked.
+ * Compresses `paths` at the selected level, or at every level when "compare
+ * all levels" is ticked: one job at a time, or several with "run in parallel".
  */
 async function run(paths) {
   paths = paths.filter((p) => files.has(p));
@@ -269,7 +285,7 @@ async function run(paths) {
     setState(entry, { kind: "queued" });
   }
   try {
-    await core.invoke("compress_files", { paths, levels });
+    await core.invoke("compress_files", { paths, levels, parallel: parallelCheckbox.checked });
   } catch (e) {
     for (const p of paths) {
       const entry = files.get(p);

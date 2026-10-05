@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use rayon::prelude::*;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
@@ -84,10 +85,13 @@ fn set_default_level(level: String) -> Result<ConfigDto, String> {
     Ok(config_dto())
 }
 
-/// Compresses each file in turn, at each of `levels` (several: to compare
-/// them, each output named after its level), emitting `compress-started`
-/// when one begins and `compress-result` as soon as its result is known, so
-/// the UI can update incrementally instead of waiting for the whole batch.
+/// Compresses each file at each of `levels` (several: to compare them, each
+/// output named after its level), in turn or, with `parallel`, several at
+/// once on the rayon pool (which the engine already uses for images, so
+/// nested work is shared rather than oversubscribed). Emits
+/// `compress-started` when a job begins and `compress-result` as soon as its
+/// result is known, so the UI can update incrementally instead of waiting for
+/// the whole batch.
 ///
 /// `async` + `spawn_blocking`: a plain (sync) command runs on the main thread,
 /// which would freeze the webview (no repaint, no scrolling) for the whole
@@ -97,6 +101,7 @@ async fn compress_files(
     app: tauri::AppHandle,
     paths: Vec<String>,
     levels: Vec<String>,
+    parallel: bool,
 ) -> Result<(), String> {
     let levels = levels
         .iter()
@@ -105,21 +110,29 @@ async fn compress_files(
     let compare = levels.len() > 1;
 
     tauri::async_runtime::spawn_blocking(move || {
-        for path in paths {
-            for &level in &levels {
-                let started = CompressStarted {
-                    input: path.clone(),
-                    level: level.as_str().to_string(),
-                };
-                let _ = app.emit("compress-started", &started);
-                let suffix = if compare {
-                    level.as_str()
-                } else {
-                    "compressed"
-                };
-                let result = compress_one(path.clone(), level, suffix);
-                let _ = app.emit("compress-result", &result);
-            }
+        let jobs: Vec<(String, Level)> = paths
+            .iter()
+            .flat_map(|p| levels.iter().map(move |&l| (p.clone(), l)))
+            .collect();
+        // Outputs never collide: distinct inputs, or distinct level suffixes.
+        let job = |(path, level): &(String, Level)| {
+            let started = CompressStarted {
+                input: path.clone(),
+                level: level.as_str().to_string(),
+            };
+            let _ = app.emit("compress-started", &started);
+            let suffix = if compare {
+                level.as_str()
+            } else {
+                "compressed"
+            };
+            let result = compress_one(path.clone(), *level, suffix);
+            let _ = app.emit("compress-result", &result);
+        };
+        if parallel {
+            jobs.par_iter().for_each(job);
+        } else {
+            jobs.iter().for_each(job);
         }
     })
     .await

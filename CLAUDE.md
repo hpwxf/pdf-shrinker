@@ -189,7 +189,9 @@ main thread and freeze the webview — no repaint, no scrolling); it emits `comp
 shows pending → queued → running → done/error as it happens. "Compress all" runs every pending or
 failed file; a row's status button (re)runs just that file. `compress_files` takes a list of
 levels: one (output `-compressed.pdf`) or, with "Compare all levels" ticked, all six (outputs
-`-<level>.pdf`, shown as a per-level table under the file). The app turns on
+`-<level>.pdf`, shown as a per-level table under the file). With "Run in parallel" (app only,
+remembered in the webview's localStorage) the file × level jobs go through rayon's `par_iter`,
+sharing the pool the engine already uses for images. The app turns on
 `Profile::measure_fidelity`, so each result carries `Report::image_fidelity` (re-encoded images'
 luma SSIM against their sources, judged at 144 dpi; CLI: `--tune fidelity=1`).
 

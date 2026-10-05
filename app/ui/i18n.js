@@ -20,6 +20,8 @@ window.I18N = (() => {
         level: "Level",
         setDefault: "Set as default level",
         compareAll: "Compare all levels",
+        parallel: "Run in parallel",
+        parallelTip: "Compress several files (or levels) at once: faster on a multi-core Mac, but uses more memory.",
       },
       level: {
         lossless: "Lossless",
@@ -91,6 +93,8 @@ window.I18N = (() => {
         level: "Niveau",
         setDefault: "Définir comme niveau par défaut",
         compareAll: "Comparer tous les niveaux",
+        parallel: "En parallèle",
+        parallelTip: "Compresse plusieurs fichiers (ou niveaux) à la fois : plus rapide sur un Mac multicœur, mais consomme plus de mémoire.",
       },
       level: {
         lossless: "Sans perte",

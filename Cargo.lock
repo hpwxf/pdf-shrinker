@@ -2898,6 +2898,7 @@ name = "pdfshrinker-app"
 version = "0.2.0"
 dependencies = [
  "pdfshrink-core",
+ "rayon",
  "serde",
  "serde_json",
  "tauri",
