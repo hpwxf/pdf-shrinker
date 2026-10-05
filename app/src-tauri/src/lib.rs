@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use pdfshrink_core::{compress_file, CompressOptions, Config, Level, Outcome};
+use pdfshrink_core::{compress_file_with, Config, ImageFidelity, Level, Outcome};
 
 #[derive(Clone, Serialize)]
 struct ConfigDto {
@@ -19,13 +19,39 @@ fn config_dto() -> ConfigDto {
 }
 
 #[derive(Clone, Serialize)]
+struct FidelityDto {
+    mean: f32,
+    min: f32,
+    images: usize,
+}
+
+impl From<ImageFidelity> for FidelityDto {
+    fn from(f: ImageFidelity) -> Self {
+        FidelityDto {
+            mean: f.mean,
+            min: f.min,
+            images: f.images,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
 struct CompressResult {
     input: String,
+    level: String,
     status: &'static str, // "compressed" | "not_smaller" | "error"
     output: Option<String>,
     input_size: Option<u64>,
     output_size: Option<u64>,
+    /// Re-encoded images' similarity to the originals (none re-encoded: `None`).
+    fidelity: Option<FidelityDto>,
     message: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct CompressStarted {
+    input: String,
+    level: String,
 }
 
 #[tauri::command]
@@ -58,9 +84,10 @@ fn set_default_level(level: String) -> Result<ConfigDto, String> {
     Ok(config_dto())
 }
 
-/// Compresses each file in turn, emitting `compress-started` when one begins
-/// and `compress-result` as soon as its result is known, so the UI can update
-/// incrementally instead of waiting for the whole batch.
+/// Compresses each file in turn, at each of `levels` (several: to compare
+/// them, each output named after its level), emitting `compress-started`
+/// when one begins and `compress-result` as soon as its result is known, so
+/// the UI can update incrementally instead of waiting for the whole batch.
 ///
 /// `async` + `spawn_blocking`: a plain (sync) command runs on the main thread,
 /// which would freeze the webview (no repaint, no scrolling) for the whole
@@ -69,36 +96,55 @@ fn set_default_level(level: String) -> Result<ConfigDto, String> {
 async fn compress_files(
     app: tauri::AppHandle,
     paths: Vec<String>,
-    level: String,
+    levels: Vec<String>,
 ) -> Result<(), String> {
-    let level = Level::parse(&level).ok_or_else(|| format!("unknown level: {level}"))?;
-    let opts = CompressOptions { level };
+    let levels = levels
+        .iter()
+        .map(|l| Level::parse(l).ok_or_else(|| format!("unknown level: {l}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let compare = levels.len() > 1;
 
     tauri::async_runtime::spawn_blocking(move || {
         for path in paths {
-            let _ = app.emit("compress-started", &path);
-            let result = compress_one(path, &opts);
-            let _ = app.emit("compress-result", &result);
+            for &level in &levels {
+                let started = CompressStarted {
+                    input: path.clone(),
+                    level: level.as_str().to_string(),
+                };
+                let _ = app.emit("compress-started", &started);
+                let suffix = if compare {
+                    level.as_str()
+                } else {
+                    "compressed"
+                };
+                let result = compress_one(path.clone(), level, suffix);
+                let _ = app.emit("compress-result", &result);
+            }
         }
     })
     .await
     .map_err(|e| e.to_string())
 }
 
-fn compress_one(path: String, opts: &CompressOptions) -> CompressResult {
+fn compress_one(path: String, level: Level, suffix: &str) -> CompressResult {
     let empty = |status, message| CompressResult {
         input: path.clone(),
+        level: level.as_str().to_string(),
         status,
         output: None,
         input_size: None,
         output_size: None,
+        fidelity: None,
         message,
     };
-    match compress_file(&PathBuf::from(&path), opts) {
+    let mut profile = level.profile();
+    profile.measure_fidelity = true;
+    match compress_file_with(&PathBuf::from(&path), &profile, suffix) {
         Ok(Outcome::Compressed { output, report }) => CompressResult {
             output: Some(output.display().to_string()),
             input_size: Some(report.input_size),
             output_size: Some(report.output_size),
+            fidelity: report.image_fidelity.map(FidelityDto::from),
             ..empty("compressed", None)
         },
         Ok(Outcome::NotSmaller) => empty("not_smaller", None),

@@ -19,6 +19,7 @@ window.I18N = (() => {
       options: {
         level: "Level",
         setDefault: "Set as default level",
+        compareAll: "Compare all levels",
       },
       level: {
         lossless: "Lossless",
@@ -35,6 +36,7 @@ window.I18N = (() => {
         high: "Images at 96 dpi, JPEG quality tuned per image to stay faithful. For the screen.",
         extreme: "Also caps slide images, crops images to the page and whitens scanned paper. Slower.",
         extremeMax: "Smallest file: 72 dpi, lower quality. Visibly degraded when zoomed in.",
+        compare: "Each file is compressed at every level (one output per level, named after it) to compare sizes and fidelity.",
       },
       actions: {
         compress: "Compress all",
@@ -51,6 +53,11 @@ window.I18N = (() => {
         reveal: "Show in Finder",
         revealExplorer: "Show in Explorer",
         remove: "Remove from the list",
+        compared: "{n} levels",
+        fidelity: "fidelity {value}",
+        fidelityTip:
+          "Similarity (luma SSIM) of the {images} re-encoded image(s) to the originals, at their original size: 1 = identical. Least faithful image: {min}.",
+        noImages: "no image re-encoded",
       },
       install: {
         button: "Install the Finder service and command-line tool…",
@@ -83,6 +90,7 @@ window.I18N = (() => {
       options: {
         level: "Niveau",
         setDefault: "Définir comme niveau par défaut",
+        compareAll: "Comparer tous les niveaux",
       },
       level: {
         lossless: "Sans perte",
@@ -99,6 +107,7 @@ window.I18N = (() => {
         high: "Images à 96 dpi, qualité JPEG ajustée image par image pour rester fidèle. Pour l'écran.",
         extreme: "Limite aussi les images de slides, recadre les images à la page et blanchit le papier des scans. Plus lent.",
         extremeMax: "Fichier le plus petit : 72 dpi, qualité réduite. Dégradation visible en zoomant.",
+        compare: "Chaque fichier est compressé à tous les niveaux (un fichier par niveau, nommé d'après lui) pour comparer tailles et fidélité.",
       },
       actions: {
         compress: "Tout compresser",
@@ -115,6 +124,11 @@ window.I18N = (() => {
         reveal: "Afficher dans le Finder",
         revealExplorer: "Afficher dans l'Explorateur",
         remove: "Retirer de la liste",
+        compared: "{n} niveaux",
+        fidelity: "fidélité {value}",
+        fidelityTip:
+          "Similarité (SSIM de luminance) des {images} image(s) réencodée(s) avec les originales, à leur taille d'origine : 1 = identique. Image la moins fidèle : {min}.",
+        noImages: "aucune image réencodée",
       },
       install: {
         button: "Installer le service Finder et l'outil en ligne de commande…",

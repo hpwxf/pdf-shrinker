@@ -24,7 +24,7 @@ mod zopfli_pass;
 
 pub use compress::{CompressOptions, Outcome, compress_file, compress_file_with};
 pub use config::Config;
-pub use engine::{Engine, Report};
+pub use engine::{Engine, ImageFidelity, Report};
 pub use error::{PdfShrinkError, Result};
 pub use level::{Level, Profile};
 pub use rust_engine::RustEngine;

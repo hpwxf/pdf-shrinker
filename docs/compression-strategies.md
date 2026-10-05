@@ -497,6 +497,22 @@ and required an external AGPL binary. What it could still do that pdfshrink can'
 CMYK, JPEG 2000, JBIG2 or CCITT images, repair broken files — is on the to-do list for the Rust
 engine instead (see `TODO.md`).
 
+### 4.5 Measuring image fidelity
+
+With `Profile::measure_fidelity` (always on in the app, `--tune fidelity=1` in the CLI, which then
+prints it), every re-encoded image is compared with its source: luma SSIM, both brought to the
+image's size at 144 dpi on the page (a Retina screen at 100 % zoom, never above the source's own
+size), so it counts downsampling and JPEG loss together, as seen on screen. A 600 dpi figure
+halved to 300 dpi loses nothing visible and scores ~1; measured at the source's size instead,
+small screenshots dropped to 0.56 for no visible change. Images over 4 Mpx at that resolution are
+judged a little more zoomed out (an A0 map of 121 Mpx took 2 s otherwise). Both sides end with the
+same filter (box average down to twice the size, then Triangle): mismatched filters measure
+themselves, not the compression. The report gives the mean weighted by each image's area on the
+page and the worst image. On the 200 dpi receipt scan: `low` 0.999, `medium` 0.994, `high` 0.979,
+`extreme` 0.978, `extreme-max` 0.959. CMYK images aren't measured. Cost: a JPEG decode, two
+resizes and an SSIM per image, about +6 % run time at `medium` on the corpus (median per file),
+which is why the app always measures it.
+
 ## 5. Known limitations and next steps
 
 - CFF (`FontFile3`) subsets are completed (`cff_subset.rs`) but not merged; Type3 fonts only when strictly identical. TrueType

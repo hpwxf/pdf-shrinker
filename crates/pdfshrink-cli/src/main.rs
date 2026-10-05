@@ -193,8 +193,18 @@ fn run_compress(cli: Cli) -> ExitCode {
     for (file, result) in &results {
         match result {
             Ok(Outcome::Compressed { output, report }) => {
+                // With `--tune fidelity=1`.
+                let fidelity = report
+                    .image_fidelity
+                    .map(|f| {
+                        format!(
+                            "  image fidelity {:.3} (min {:.3}, {} images)",
+                            f.mean, f.min, f.images
+                        )
+                    })
+                    .unwrap_or_default();
                 println!(
-                    "{}  ->  {}   {} -> {}  (-{:.0}%)",
+                    "{}  ->  {}   {} -> {}  (-{:.0}%){fidelity}",
                     file.display(),
                     output.display(),
                     human_size(report.input_size),

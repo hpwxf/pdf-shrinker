@@ -4,6 +4,7 @@ const { t } = window.I18N;
 const levelSelect = document.getElementById("level-select");
 const levelHint = document.getElementById("level-hint");
 const setDefaultCheckbox = document.getElementById("set-default");
+const compareAllCheckbox = document.getElementById("compare-all");
 const compressBtn = document.getElementById("compress-btn");
 const clearBtn = document.getElementById("clear-btn");
 const pickFilesBtn = document.getElementById("pick-files");
@@ -19,8 +20,11 @@ const IS_WINDOWS = navigator.userAgent.includes("Windows");
 installBtn.hidden = IS_WINDOWS;
 installStatus.hidden = IS_WINDOWS;
 
-/** path -> { li, detail, render() } */
+/** path -> entry: { li, row, statusBtn, detail, reveal, remove, levelList, state, compare } */
 const files = new Map();
+
+/** Every level, in the order the select lists them (and comparisons show them). */
+const ALL_LEVELS = [...levelSelect.options].map((o) => o.value);
 let buildInfo = null;
 
 function buildInfoText() {
@@ -113,6 +117,7 @@ function icon(name) {
 /** Status kind -> [icon, whether the status button (re)runs the file, its tooltip key]. */
 const STATUS = {
   pending: ["run", true, "file.run"],
+  compared: ["done", true, "file.rerun"],
   queued: ["queued", false, "file.queued"],
   running: ["running", false, "file.running"],
   compressed: ["done", true, "file.rerun"],
@@ -123,11 +128,49 @@ const STATUS = {
 /** Files "Compress all" picks up: never run yet, or failed. */
 const RUNNABLE = new Set(["pending", "error"]);
 
+function formatScore(x) {
+  return x.toLocaleString(window.I18N.getLocale(), {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+  });
+}
+
+/** "fidelity 0.983" for a compression result, with its explanation as tooltip. */
+function fidelityText(f) {
+  if (!f) return [t("file.noImages"), ""];
+  return [
+    t("file.fidelity", { value: formatScore(f.mean) }),
+    t("file.fidelityTip", { images: f.images, min: formatScore(f.min) }),
+  ];
+}
+
+/** "332.3 KB → 56.0 KB · −83 %" */
+function sizeText(s) {
+  return `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)} · −${s.pct} %`;
+}
+
+/** Turns a `compress-result` payload into a row/level state. */
+function resultState(r) {
+  if (r.status === "compressed") {
+    const pct = r.input_size > 0 ? Math.round((1 - r.output_size / r.input_size) * 100) : 0;
+    return {
+      kind: "compressed",
+      inputSize: r.input_size,
+      outputSize: r.output_size,
+      pct,
+      output: r.output,
+      fidelity: r.fidelity,
+    };
+  }
+  if (r.status === "not_smaller") return { kind: "not_smaller" };
+  return { kind: "error", message: r.message };
+}
+
 /** Renders a file's row (one line) in the active language from its last known state. */
 function renderFileStatus(entry) {
   const s = entry.state;
   const [iconName, runnable, tip] = STATUS[s.kind];
-  entry.li.className = `file-row ${s.kind}`;
+  entry.row.className = `file-row ${s.kind}`;
   entry.statusBtn.innerHTML = icon(iconName);
   entry.statusBtn.disabled = !runnable;
   entry.statusBtn.title = t(tip);
@@ -135,7 +178,11 @@ function renderFileStatus(entry) {
   entry.detail.title = "";
   entry.reveal.hidden = s.kind !== "compressed";
   if (s.kind === "compressed") {
-    entry.detail.textContent = `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)} · −${s.pct} %`;
+    const [fid, fidTip] = fidelityText(s.fidelity);
+    entry.detail.textContent = `${sizeText(s)} · ${fid}`;
+    entry.detail.title = fidTip;
+  } else if (s.kind === "compared") {
+    entry.detail.textContent = t("file.compared", { n: entry.levels.length });
   } else if (s.kind === "not_smaller") {
     entry.detail.textContent = t("file.notSmaller");
   } else if (s.kind === "error") {
@@ -151,6 +198,48 @@ function renderFileStatus(entry) {
   const busy = s.kind === "queued" || s.kind === "running";
   entry.remove.disabled = busy;
   entry.remove.title = t("file.remove");
+  renderLevelResults(entry);
+}
+
+/** The per-level lines under a file compressed in "compare all levels" mode. */
+function renderLevelResults(entry) {
+  entry.levelList.hidden = !entry.compare;
+  if (!entry.compare) return;
+  entry.levelList.innerHTML = "";
+  for (const level of entry.levels) {
+    const s = entry.results[level];
+    const li = document.createElement("li");
+    li.className = `level-result ${s.kind}`;
+    const name = document.createElement("span");
+    name.className = "level-name";
+    name.textContent = t(`level.${levelKey(level)}`);
+    const size = document.createElement("span");
+    size.className = "level-size";
+    const fid = document.createElement("span");
+    fid.className = "level-fidelity";
+    const reveal = document.createElement("button");
+    reveal.className = "icon-btn";
+    reveal.innerHTML = icon("reveal");
+    reveal.title = t(IS_WINDOWS ? "file.revealExplorer" : "file.reveal");
+    // Not `hidden`: the cell must stay in the grid to keep the columns aligned.
+    reveal.style.visibility = s.kind === "compressed" ? "visible" : "hidden";
+    reveal.addEventListener("click", () => core.invoke("reveal_in_finder", { path: s.output }));
+    if (s.kind === "compressed") {
+      size.textContent = sizeText(s);
+      [fid.textContent, fid.title] = fidelityText(s.fidelity);
+    } else if (s.kind === "not_smaller") {
+      size.textContent = t("file.notSmaller");
+    } else if (s.kind === "error") {
+      size.textContent = s.message || t("file.failed");
+      size.title = s.message || "";
+    } else if (s.kind === "running") {
+      size.textContent = t("file.running");
+    } else {
+      size.textContent = t("file.queued");
+    }
+    li.append(name, size, fid, reveal);
+    entry.levelList.append(li);
+  }
 }
 
 function updateCompressAll() {
@@ -163,17 +252,33 @@ function setState(entry, state) {
   updateCompressAll();
 }
 
-/** Compresses `paths` (in order, one at a time) at the selected level. */
+/**
+ * Compresses `paths` (in order, one at a time) at the selected level, or at
+ * every level when "compare all levels" is ticked.
+ */
 async function run(paths) {
   paths = paths.filter((p) => files.has(p));
   if (paths.length === 0) return;
-  for (const p of paths) setState(files.get(p), { kind: "queued" });
+  const compare = compareAllCheckbox.checked;
+  const levels = compare ? ALL_LEVELS : [levelSelect.value];
+  for (const p of paths) {
+    const entry = files.get(p);
+    entry.compare = compare;
+    entry.levels = levels;
+    entry.results = Object.fromEntries(levels.map((l) => [l, { kind: "queued" }]));
+    setState(entry, { kind: "queued" });
+  }
   try {
-    await core.invoke("compress_files", { paths, level: levelSelect.value });
+    await core.invoke("compress_files", { paths, levels });
   } catch (e) {
     for (const p of paths) {
       const entry = files.get(p);
       if (entry && (entry.state.kind === "queued" || entry.state.kind === "running")) {
+        for (const l of entry.levels) {
+          if (["queued", "running"].includes(entry.results[l].kind)) {
+            entry.results[l] = { kind: "error", message: String(e) };
+          }
+        }
         setState(entry, { kind: "error", message: String(e) });
       }
     }
@@ -185,6 +290,8 @@ function addFiles(paths) {
     if (files.has(path) || !path.toLowerCase().endsWith(".pdf")) continue;
 
     const li = document.createElement("li");
+    li.className = "file-item";
+    const row = document.createElement("div");
     const statusBtn = document.createElement("button");
     statusBtn.className = "status-btn";
     statusBtn.addEventListener("click", () => run([path]));
@@ -205,10 +312,26 @@ function addFiles(paths) {
     remove.className = "icon-btn remove-btn";
     remove.innerHTML = icon("remove");
     remove.addEventListener("click", () => removeFile(path));
-    li.append(statusBtn, name, detail, reveal, remove);
+    row.append(statusBtn, name, detail, reveal, remove);
+    const levelList = document.createElement("ul");
+    levelList.className = "level-results";
+    levelList.hidden = true;
+    li.append(row, levelList);
     fileList.append(li);
 
-    const entry = { li, statusBtn, detail, reveal, remove, state: { kind: "pending" } };
+    const entry = {
+      li,
+      row,
+      statusBtn,
+      detail,
+      reveal,
+      remove,
+      levelList,
+      compare: false,
+      levels: [],
+      results: {},
+      state: { kind: "pending" },
+    };
     files.set(path, entry);
     renderFileStatus(entry);
   }
@@ -235,7 +358,8 @@ function levelKey(level) {
 }
 
 function renderLevelHint() {
-  levelHint.textContent = t(`levelHint.${levelKey(levelSelect.value)}`);
+  const key = compareAllCheckbox.checked ? "compare" : levelKey(levelSelect.value);
+  levelHint.textContent = t(`levelHint.${key}`);
 }
 
 async function loadConfig() {
@@ -256,6 +380,7 @@ async function onLevelChange() {
 
 levelSelect.addEventListener("change", onLevelChange);
 setDefaultCheckbox.addEventListener("change", onLevelChange);
+compareAllCheckbox.addEventListener("change", renderLevelHint);
 
 document.querySelectorAll(".lang-btn").forEach((btn) => {
   btn.addEventListener("click", () => window.I18N.setLocale(btn.dataset.lang));
@@ -300,23 +425,25 @@ event
   .then((paths) => paths.length && addFiles(paths));
 
 event.listen("compress-started", (e) => {
-  const entry = files.get(e.payload);
-  if (entry) setState(entry, { kind: "running" });
+  const { input, level } = e.payload;
+  const entry = files.get(input);
+  if (!entry) return;
+  if (entry.compare) entry.results[level] = { kind: "running" };
+  setState(entry, { kind: "running" });
 });
 
 event.listen("compress-result", (e) => {
   const r = e.payload;
   const entry = files.get(r.input);
   if (!entry) return;
-
-  if (r.status === "compressed") {
-    const pct = r.input_size > 0 ? Math.round((1 - r.output_size / r.input_size) * 100) : 0;
-    setState(entry, { kind: "compressed", inputSize: r.input_size, outputSize: r.output_size, pct, output: r.output });
-  } else if (r.status === "not_smaller") {
-    setState(entry, { kind: "not_smaller" });
-  } else {
-    setState(entry, { kind: "error", message: r.message });
+  const state = resultState(r);
+  if (!entry.compare) {
+    setState(entry, state);
+    return;
   }
+  entry.results[r.level] = state;
+  const done = entry.levels.every((l) => !["queued", "running"].includes(entry.results[l].kind));
+  setState(entry, done ? { kind: "compared" } : { kind: "running" });
 });
 
 compressBtn.addEventListener("click", () =>

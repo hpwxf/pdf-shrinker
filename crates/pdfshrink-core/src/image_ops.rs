@@ -32,13 +32,18 @@ use image::{GrayImage, RgbImage};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, StringFormat};
 use rayon::prelude::*;
 
+use crate::engine::ImageFidelity;
 use crate::image_codecs;
 use crate::level::Profile;
 use crate::placement::{self, Placement};
 
 /// Downsample/re-encode every eligible image in `doc` according to `profile`.
-/// Returns `(images_resampled, images_skipped)`.
-pub fn resample_images(doc: &mut Document, profile: &Profile) -> (usize, usize) {
+/// Returns `(images_resampled, images_skipped, fidelity)`, the last one only
+/// with `Profile::measure_fidelity`.
+pub fn resample_images(
+    doc: &mut Document,
+    profile: &Profile,
+) -> (usize, usize, Option<ImageFidelity>) {
     let placements = placement::compute_image_placement(doc);
     let fallback_pt = fallback_page_size_pt(doc);
     let smask_ids = collect_smask_ids(doc);
@@ -115,6 +120,7 @@ pub fn resample_images(doc: &mut Document, profile: &Profile) -> (usize, usize) 
         .collect();
 
     let resampled = plans.len();
+    let fidelity = ImageFidelity::from_scores(plans.iter().filter_map(|p| p.fidelity));
     // Soft masks can be shared by several images (after dedup); resize each
     // once, to the largest size any of its parents asked for.
     let mut smask_updates: HashMap<ObjectId, SmaskUpdate> = HashMap::new();
@@ -185,7 +191,7 @@ pub fn resample_images(doc: &mut Document, profile: &Profile) -> (usize, usize) 
         }
     }
 
-    (resampled, candidates - resampled)
+    (resampled, candidates - resampled, fidelity)
 }
 
 /// Clone of `stream` with an indirect (or single-element array) `/DecodeParms`
@@ -232,6 +238,9 @@ struct Plan {
     /// Kept part of the image, `[u0, v0, u1, v1]` in image space, when it was
     /// cropped.
     crop: Option<[f32; 4]>,
+    /// With `Profile::measure_fidelity`: luma SSIM of the result against the
+    /// source at the source's size, and the image's area on the page (weight).
+    fidelity: Option<(f32, f64)>,
 }
 
 /// Number of times each object is referenced anywhere in the document.
@@ -951,6 +960,10 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     let (new_w, new_h) = target_dims(width, height, placement, profile);
     let needs_resize = (new_w, new_h) != (width, height);
 
+    // Fidelity is measured against the decoded source as drawn (after the
+    // crop, before whitening), luma only.
+    let reference = profile.measure_fidelity.then(|| luma_of(&pixels)).flatten();
+
     let mut pixels = pixels;
     let paper = if covers_page {
         paper_white_point(&pixels)
@@ -993,6 +1006,22 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
             _ => None,
         }
     };
+    // What a native-resolution palette would show (lossless, but possibly
+    // whitened); a CCITT alternative is decoded back instead.
+    let native_luma = (reference.is_some()
+        && matches!(
+            alternative,
+            Some((
+                Encoded {
+                    kind: EncodedKind::Palette { .. },
+                    ..
+                },
+                _,
+                _
+            ))
+        ))
+    .then(|| luma_of(&pixels))
+    .flatten();
 
     let resized = match pixels {
         Pixels::Gray(img) if needs_resize => Pixels::Gray(image::imageops::resize(
@@ -1025,10 +1054,30 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         !keep_color_space,
     )?;
     let (mask_w, mask_h) = (new_w, new_h);
-    let (encoded, new_w, new_h) = match alternative {
-        Some((alt, w, h)) if alt.content.len() < encoded.content.len() => (alt, w, h),
-        _ => (encoded, new_w, new_h),
+    let (encoded, new_w, new_h, alt_chosen) = match alternative {
+        Some((alt, w, h)) if alt.content.len() < encoded.content.len() => (alt, w, h, true),
+        _ => (encoded, new_w, new_h, false),
     };
+    let fidelity = reference.as_deref().and_then(|r| {
+        let shown = match &encoded.kind {
+            EncodedKind::Palette { .. } if alt_chosen => native_luma?,
+            EncodedKind::Palette { .. } => luma_of(&resized)?,
+            kind => decoded_luma(&encoded.content, kind, new_w, new_h)?,
+        };
+        let score = luma_fidelity(r, width, height, shown, new_w, new_h, placement.dpi);
+        if std::env::var_os("PDFSHRINK_DEBUG").is_some() {
+            let kind = match &encoded.kind {
+                EncodedKind::Jpeg { .. } => "jpeg",
+                EncodedKind::Palette { .. } => "palette",
+                EncodedKind::Ccitt { .. } => "ccitt",
+            };
+            eprintln!(
+                "  fidelity {:?} {width}x{height} -> {new_w}x{new_h} {kind}: {score:.3}",
+                job.id
+            );
+        }
+        Some((score, on_page_area(width, height, placement)))
+    });
     let smask_created = matches!(smask, Some((None, _)));
     if encoded.content.len() >= original_len
         && !drop_smask
@@ -1101,7 +1150,12 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         let (aw, ah) = smask_dims.unwrap_or(alpha.dimensions());
         let (cw, chh) = alpha.dimensions();
         let alpha = if mask_w < cw || mask_h < chh {
-            image::imageops::resize(&alpha, mask_w, mask_h, image::imageops::FilterType::Lanczos3)
+            image::imageops::resize(
+                &alpha,
+                mask_w,
+                mask_h,
+                image::imageops::FilterType::Lanczos3,
+            )
         } else {
             alpha
         };
@@ -1154,6 +1208,7 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         content,
         smask: smask_action,
         crop: crop_unit,
+        fidelity,
     })
 }
 
@@ -1212,6 +1267,9 @@ fn plan_bilevel(
     };
 
     let (new_w, new_h) = target_dims(w, h, placement, &bilevel_profile(profile));
+    // Downsampling is the only loss here: measured against the source bits.
+    let reference =
+        (profile.measure_fidelity && (new_w, new_h) != (w, h)).then(|| bits_to_luma(&raw, w, h));
     let bits = if (new_w, new_h) != (w, h) {
         // Which sample value paints: 0 unless a /Decode [1 0] inverts it.
         let inverted = stream
@@ -1225,6 +1283,21 @@ fn plan_bilevel(
     } else {
         raw
     };
+    let fidelity = profile.measure_fidelity.then(|| {
+        let score = match &reference {
+            None => 1.0, // lossless
+            Some(r) => luma_fidelity(
+                r,
+                w,
+                h,
+                bits_to_luma(&bits, new_w, new_h),
+                new_w,
+                new_h,
+                placement.dpi,
+            ),
+        };
+        (score, on_page_area(w, h, placement))
+    });
     let plan = image_codecs::encode_g4(&bits, new_w, new_h)
         .filter(|g4| g4.len() < stream.content.len())
         .map(|g4| {
@@ -1239,9 +1312,113 @@ fn plan_bilevel(
                 content: g4,
                 smask: SmaskAction::Keep,
                 crop: None,
+                fidelity,
             }
         });
     Some(plan)
+}
+
+/// Luma samples of gray or RGB pixels (`None` for CMYK: not measured).
+fn luma_of(pixels: &Pixels) -> Option<Vec<u8>> {
+    match pixels {
+        Pixels::Gray(img) => Some(img.as_raw().clone()),
+        Pixels::Rgb(img) => Some(to_luma(img.as_raw())),
+        Pixels::Cmyk(_) => None,
+    }
+}
+
+/// Packed 1-bit rows as 0/255 luma.
+fn bits_to_luma(bits: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let row = (w as usize).div_ceil(8);
+    let mut out = Vec::with_capacity(w as usize * h as usize);
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let bit = (bits[y * row + x / 8] >> (7 - x % 8)) & 1;
+            out.push(if bit == 1 { 255 } else { 0 });
+        }
+    }
+    out
+}
+
+/// Luma of an encoded JPEG (gray or RGB) or CCITT image, as a viewer decodes it.
+fn decoded_luma(content: &[u8], kind: &EncodedKind, w: u32, h: u32) -> Option<Vec<u8>> {
+    match kind {
+        EncodedKind::Jpeg {
+            color: JpegColor::Gray | JpegColor::Rgb,
+        } => {
+            let img =
+                image::load_from_memory_with_format(content, image::ImageFormat::Jpeg).ok()?;
+            Some(img.into_luma8().into_raw())
+        }
+        EncodedKind::Ccitt { .. } => {
+            let bits = image_codecs::decode_g4(content, w, h, false)?;
+            Some(bits_to_luma(&bits, w, h))
+        }
+        _ => None,
+    }
+}
+
+/// Resolution fidelity is judged at: a Retina screen at 100 % zoom. Detail
+/// beyond it (a 600 dpi image downsampled to 150 dpi) doesn't show unless
+/// zoomed in, and shouldn't sink the score.
+const FIDELITY_DPI: f32 = 144.0;
+
+/// Largest size (pixels) fidelity is computed at.
+const FIDELITY_MAX_PX: f32 = 4_000_000.0;
+
+/// SSIM of `shown` (`sw`×`sh`) against `reference` (`w`×`h`, drawn at `dpi`),
+/// both brought to the image's size at [`FIDELITY_DPI`] (never above the
+/// source's): what downsampling and lossy encoding cost together, as seen.
+fn luma_fidelity(
+    reference: &[u8],
+    w: u32,
+    h: u32,
+    shown: Vec<u8>,
+    sw: u32,
+    sh: u32,
+    dpi: f32,
+) -> f32 {
+    let mut scale = if dpi > FIDELITY_DPI {
+        FIDELITY_DPI / dpi
+    } else {
+        1.0
+    };
+    // Huge images (a 121 Mpx A0 map) would take seconds: judged a bit more
+    // zoomed out instead.
+    let px = w as f32 * h as f32 * scale * scale;
+    if px > FIDELITY_MAX_PX {
+        scale *= (FIDELITY_MAX_PX / px).sqrt();
+    }
+    let (ew, eh) = (
+        ((w as f32 * scale).round() as u32).max(1),
+        ((h as f32 * scale).round() as u32).max(1),
+    );
+    let fit = |buf: Vec<u8>, bw: u32, bh: u32| -> Vec<u8> {
+        if (bw, bh) == (ew, eh) {
+            return buf;
+        }
+        let mut img = GrayImage::from_raw(bw, bh, buf).expect("luma buffer size");
+        if bw > 2 * ew && bh > 2 * eh {
+            // A box average down to twice the target first: much faster than
+            // a filtered resize on big sources. Not all the way: both sides
+            // must end with the same filter, or SSIM measures the filters.
+            img = image::imageops::thumbnail(&img, 2 * ew, 2 * eh);
+        }
+        image::imageops::resize(&img, ew, eh, image::imageops::FilterType::Triangle).into_raw()
+    };
+    let reference = fit(reference.to_vec(), w, h);
+    let shown = fit(shown, sw, sh);
+    ssim(&reference, &shown, ew, eh, 1)
+}
+
+/// Area the image covers on the page, in square inches (its fidelity's weight).
+fn on_page_area(w: u32, h: u32, placement: Placement) -> f64 {
+    let dpi = if placement.dpi > 0.0 {
+        placement.dpi as f64
+    } else {
+        72.0
+    };
+    w as f64 * h as f64 / (dpi * dpi)
 }
 
 /// `profile` with its resolution targets scaled for bi-level images.
@@ -1782,6 +1959,39 @@ mod tests {
         dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
         dict.set("DecodeParms", parms);
         Stream::new(dict, content).decompressed_content().unwrap()
+    }
+
+    #[test]
+    fn fidelity_is_judged_at_the_viewing_resolution() {
+        let (w, h) = (400u32, 300u32);
+        let src: Vec<u8> = (0..w * h)
+            .map(|i| {
+                if ((i % w) / 2 + (i / w) / 2) % 2 == 0 {
+                    30
+                } else {
+                    220
+                }
+            })
+            .collect();
+        // Identical: 1.
+        assert!((luma_fidelity(&src, w, h, src.clone(), w, h, 144.0) - 1.0).abs() < 1e-6);
+        // Halved: a fine checkerboard turns gray, a real loss at 144 dpi…
+        let img = GrayImage::from_raw(w, h, src.clone()).unwrap();
+        let half =
+            image::imageops::resize(&img, w / 2, h / 2, image::imageops::FilterType::Triangle);
+        let at_144 = luma_fidelity(&src, w, h, half.clone().into_raw(), w / 2, h / 2, 144.0);
+        assert!(at_144 < 0.5, "{at_144}");
+        // …but invisible when the image is drawn at 600 dpi.
+        let at_600 = luma_fidelity(&src, w, h, half.into_raw(), w / 2, h / 2, 600.0);
+        assert!(at_600 > 0.95, "{at_600}");
+    }
+
+    #[test]
+    fn image_fidelity_is_an_area_weighted_mean() {
+        let f = ImageFidelity::from_scores([(1.0, 3.0), (0.8, 1.0)].into_iter()).unwrap();
+        assert!((f.mean - 0.95).abs() < 1e-6);
+        assert_eq!((f.min, f.images), (0.8, 2));
+        assert!(ImageFidelity::from_scores(std::iter::empty()).is_none());
     }
 
     #[test]

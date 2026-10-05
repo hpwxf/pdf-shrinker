@@ -209,6 +209,9 @@ pub struct Profile {
     /// that isn't pure white): stretch levels so the paper becomes white.
     /// Lossy by design — it changes the page's look slightly (brighter paper).
     pub scan_whiten: bool,
+    /// Measure how faithful re-encoded images are (`Report::image_fidelity`).
+    /// Doesn't change the output; costs a decode and an SSIM per image.
+    pub measure_fidelity: bool,
 }
 
 impl Profile {
@@ -235,11 +238,12 @@ impl Profile {
         drop_opaque_smask: true,
         crop: false,
         scan_whiten: false,
+        measure_fidelity: false,
     };
 
     /// Keys accepted by [`Profile::tune`].
     pub const TUNABLE: &'static str = "dpi, trigger, quality, max_dim, page_px, ssim, min_quality \
-        (numbers); dedup, fonts, cff, cff_subset, zopfli, gray, palette, opaque_smask, crop, scan_whiten (0/1)";
+        (numbers); dedup, fonts, cff, cff_subset, zopfli, gray, palette, opaque_smask, crop, scan_whiten, fidelity (0/1)";
 
     /// Override one parameter from a `key=value` string, for experimenting
     /// with variants from the CLI (`--tune page_px=1800`).
@@ -273,6 +277,7 @@ impl Profile {
             "opaque_smask" => self.drop_opaque_smask = b()?,
             "crop" => self.crop = b()?,
             "scan_whiten" => self.scan_whiten = b()?,
+            "fidelity" => self.measure_fidelity = b()?,
             _ => return Err(format!("unknown key '{k}' (expected: {})", Self::TUNABLE)),
         }
         Ok(())

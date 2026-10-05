@@ -115,17 +115,22 @@ header h1 {
 
 .options {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px 16px;
-  align-items: center;
-}
-
-.options label {
-  display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.options-caption {
   font-size: 12px;
   color: var(--muted);
+}
+
+/* The checkboxes sit on the select's own row, so they centre on it rather
+   than on the caption + select block. */
+.options-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
 }
 
 .level-hint {
@@ -137,9 +142,11 @@ header h1 {
 }
 
 .options label.checkbox {
-  flex-direction: row;
+  display: flex;
   align-items: center;
   gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 select {
@@ -195,12 +202,59 @@ button.link {
   border-top: 1px solid var(--border);
 }
 
+.file-item {
+  border-bottom: 1px solid var(--border);
+}
+
 .file-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 5px 4px;
-  border-bottom: 1px solid var(--border);
+}
+
+/* "Compare all levels": one line per level under the file, as a table. */
+.level-results {
+  list-style: none;
+  margin: 0 0 6px 34px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  column-gap: 14px;
+  row-gap: 2px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.level-results[hidden] {
+  display: none;
+}
+
+.level-result {
+  display: contents;
+}
+
+.level-name {
+  font-weight: 500;
+}
+
+.level-size,
+.level-fidelity {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.level-result.compressed .level-size {
+  color: var(--ok);
+}
+
+.level-result.error .level-size {
+  color: var(--err);
+}
+
+.level-result .icon-btn {
+  width: 18px;
+  height: 18px;
 }
 
 .file-name {

@@ -60,10 +60,10 @@ impl Engine for RustEngine {
             phase.done(&format!("CFF subset ({n} programs rewritten)"));
         }
 
-        let (images_resampled, images_skipped) = if profile.resample_images {
+        let (images_resampled, images_skipped, image_fidelity) = if profile.resample_images {
             image_ops::resample_images(&mut doc, profile)
         } else {
-            (0, 0)
+            (0, 0, None)
         };
         phase.done(&format!(
             "images ({images_resampled} re-encoded, {images_skipped} skipped)"
@@ -112,6 +112,7 @@ impl Engine for RustEngine {
             output_size,
             images_resampled,
             images_skipped,
+            image_fidelity,
         })
     }
 }

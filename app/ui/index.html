@@ -22,8 +22,8 @@
     </section>
 
     <section class="options">
-      <label>
-        <span data-i18n="options.level"></span>
+      <span class="options-caption" data-i18n="options.level"></span>
+      <div class="options-row">
         <select id="level-select">
           <option value="lossless" data-i18n="level.lossless"></option>
           <option value="low" data-i18n="level.low"></option>
@@ -32,11 +32,15 @@
           <option value="extreme" data-i18n="level.extreme"></option>
           <option value="extreme-max" data-i18n="level.extremeMax"></option>
         </select>
-      </label>
-      <label class="checkbox">
-        <input type="checkbox" id="set-default" />
-        <span data-i18n="options.setDefault"></span>
-      </label>
+        <label class="checkbox">
+          <input type="checkbox" id="set-default" />
+          <span data-i18n="options.setDefault"></span>
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" id="compare-all" />
+          <span data-i18n="options.compareAll"></span>
+        </label>
+      </div>
       <p id="level-hint" class="level-hint"></p>
     </section>
 
