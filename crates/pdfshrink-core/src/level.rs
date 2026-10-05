@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::jpeg::JpegEncoder;
+
 /// Compression level requested by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -66,6 +68,14 @@ impl Level {
                 "+ 72 dpi, 1600 px across, SSIM ≥ 0.96: visibly lossy when zoomed in"
             }
         }
+    }
+
+    /// Whether this build may produce a different file than the desktop
+    /// build at this level: true when the level re-encodes images and the
+    /// JPEG encoder isn't mozjpeg (the WebAssembly build).
+    pub fn differs_from_desktop(&self) -> bool {
+        let p = self.profile();
+        p.resample_images && p.jpeg_encoder != JpegEncoder::Mozjpeg
     }
 
     /// Resolve the tuning profile for this level.
@@ -212,6 +222,10 @@ pub struct Profile {
     /// Measure how faithful re-encoded images are (`Report::image_fidelity`).
     /// Doesn't change the output; costs a decode and an SSIM per image.
     pub measure_fidelity: bool,
+    /// Which encoder writes JPEGs (see `jpeg.rs`): mozjpeg when the build
+    /// has it, else the pure-Rust one — the WebAssembly build's output can
+    /// differ from the desktop's at every level that re-encodes images.
+    pub jpeg_encoder: JpegEncoder,
 }
 
 impl Profile {
@@ -239,11 +253,13 @@ impl Profile {
         crop: false,
         scan_whiten: false,
         measure_fidelity: false,
+        jpeg_encoder: JpegEncoder::DEFAULT,
     };
 
     /// Keys accepted by [`Profile::tune`].
     pub const TUNABLE: &'static str = "dpi, trigger, quality, max_dim, page_px, ssim, min_quality \
-        (numbers); dedup, fonts, cff, cff_subset, zopfli, gray, palette, opaque_smask, crop, scan_whiten, fidelity (0/1)";
+        (numbers); dedup, fonts, cff, cff_subset, zopfli, gray, palette, opaque_smask, crop, scan_whiten, fidelity (0/1); \
+        jpeg (mozjpeg or rust)";
 
     /// Override one parameter from a `key=value` string, for experimenting
     /// with variants from the CLI (`--tune page_px=1800`).
@@ -278,6 +294,7 @@ impl Profile {
             "crop" => self.crop = b()?,
             "scan_whiten" => self.scan_whiten = b()?,
             "fidelity" => self.measure_fidelity = b()?,
+            "jpeg" => self.jpeg_encoder = JpegEncoder::parse(v).ok_or_else(bad)?,
             _ => return Err(format!("unknown key '{k}' (expected: {})", Self::TUNABLE)),
         }
         Ok(())
@@ -292,10 +309,12 @@ mod tests {
     fn level_names_round_trip_through_parse_and_serde() {
         for level in Level::ALL {
             assert_eq!(Level::parse(level.as_str()), Some(level));
+            #[cfg(feature = "native")]
             let toml = toml::to_string(&crate::Config {
                 default_level: level,
             })
             .unwrap();
+            #[cfg(feature = "native")]
             assert!(toml.contains(&format!("\"{}\"", level.as_str())), "{toml}");
         }
         assert_eq!(Level::parse("extreme-safe"), None);

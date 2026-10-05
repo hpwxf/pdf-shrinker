@@ -14,6 +14,12 @@ installer). There, `app/src-tauri/tauri.windows.conf.json` drops the CLI sidecar
 `app/src-tauri/windows/pdf-open-with.nsh` registers the app as an extra "Open with" choice instead.
 The UI hides "Install integrations" (macOS-only) on Windows.
 
+A fourth front end, the **web version** (`crates/pdfshrink-wasm` + `web/`), runs the same core
+compiled to WebAssembly entirely in the browser: the server only serves static files. It builds the
+core without its `native` feature, so it is single-threaded and encodes JPEGs with the pure-Rust
+`jpeg-encoder` instead of mozjpeg — its output differs from the desktop's at every level that
+re-encodes images (often bigger), and the page says so (`Level::differs_from_desktop`).
+
 ## Commands
 
 ```bash
@@ -60,6 +66,14 @@ cd app && cargo tauri build --target aarch64-apple-darwin --bundles dmg
 
 # Full .app + .dmg (stages the sidecar, builds, ad-hoc signs)
 ./scripts/build-dmg.sh
+
+# Web version into web/dist (gitignored); needs `rustup target add wasm32-unknown-unknown` and
+# `cargo install wasm-bindgen-cli --version <wasm-bindgen version in Cargo.lock> --locked`
+./scripts/build-web.sh
+python3 -m http.server -d web/dist 8000     # module workers + wasm: http only, not file://
+
+# Compare the JPEG encoders natively (jpeg=rust ≈ the web version's output; identical except CMYK)
+cargo run --release -p pdfshrink-cli -- -l medium --tune jpeg=rust --tune fidelity=1 --suffix rust file.pdf
 ```
 
 Running the app (`cargo tauri build`/`dev`) requires `app/src-tauri/binaries/pdfshrink-aarch64-apple-darwin`
@@ -74,9 +88,15 @@ machine) and visually with `pdftoppm -png out.pdf preview`.
 ### `crates/pdfshrink-core` — the only place compression logic lives
 
 `compress_file(input, &CompressOptions) -> Result<Outcome>` (`compress.rs`) is the single entry point
-every front end calls. It picks an output path (`name-compressed.pdf`, `-compressed-2` etc. if taken),
+every desktop front end calls; `compress_bytes(&[u8], name, &Profile)` (`rust_engine.rs`) is its
+in-memory core and the only entry point of the WebAssembly build. `compress_file` picks an output path (`name-compressed.pdf`, `-compressed-2` etc. if taken),
 runs the engine into a same-directory temp file, and only renames it into place if the result is
 actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
+
+Cargo features: `native` (default) = `mozjpeg` + `parallel` (rayon, via `par.rs`'s `filter_map`) +
+lopdf's defaults + `config.rs`/`compress.rs`/`integration.rs` (toml, directories). Without it the
+crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()` unconditionally
+(it panics on wasm32-unknown-unknown; `PhaseLog` only reads the clock with `PDFSHRINK_DEBUG`).
 
 - `level.rs`: `Level` (Lossless/Low/Medium/High/Extreme/ExtremeMax) → `Profile` (target DPI, JPEG quality, trigger ratio, per-pass switches).
   An image is only touched if its effective on-page DPI exceeds `target_dpi * trigger_ratio`.
@@ -95,7 +115,7 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   square at each `Do`. When an image is drawn more than once, the smallest DPI (its most demanding
   placement) wins. Images the walk never reaches fall back to the document's largest page size
   (conservative — least likely to trigger unwanted resampling). The walk's op budget is per page.
-  Images are planned in parallel (rayon) from cloned streams, then applied sequentially. lopdf only
+  Images are planned in parallel (rayon, with the `parallel` feature) from cloned streams, then applied sequentially. lopdf only
   honours a *direct* `/DecodeParms` dict, so `image_ops` inlines indirect ones before decoding. This CTM-based size is not reliable
   for an image drawn oversized and then clipped to the visible page area (a common "full-bleed
   background" export from slide tools) — it overstates the on-page footprint and so understates the
@@ -103,7 +123,7 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
 - `image_ops.rs`: decodes gray/RGB/CMYK (device or `ICCBased` via the ICC stream's `/N`), `Indexed`
   and 16-bit images stored as `DCTDecode` (also wrapped as `[/FlateDecode /DCTDecode]`, as iLovePDF
   writes them), `JPXDecode` or raw/`FlateDecode` samples; codecs live in `image_codecs.rs`
-  (hayro-jpeg2000, mozjpeg CMYK, `fax` CCITT G4). CMYK is re-encoded as CMYK JPEG, never converted:
+  (hayro-jpeg2000, `fax` CCITT G4; JPEG encoding and CMYK JPEG decoding are in `jpeg.rs`). CMYK is re-encoded as CMYK JPEG, never converted:
   an Adobe-marker CMYK JPEG source keeps its stored samples and `/Decode`, any other CMYK source is
   written inverted with `/Decode [1 0 1 0 1 0 1 0]`. A JPX alpha channel with `/SMaskInData` becomes
   a real `/SMask`. 1-bit raw/Flate/CCITT-G4 images and stencil masks take a separate path
@@ -115,10 +135,24 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   shrinks a lot from that alone); on top of that, it's downsampled (`image::imageops::resize`,
   Lanczos3) if either its placement-derived DPI exceeds `target_dpi * trigger_ratio` *or* its longest
   side exceeds the profile's `max_dimension` — whichever wants the smaller result wins. Re-encode via
-  `mozjpeg` (wrapped in `catch_unwind` per its own safety note), and only replace the object if the
+  `jpeg::encode` (mozjpeg wrapped in `catch_unwind` per its own safety note), and only replace the object if the
   new bytes are actually smaller. An `SMask` is resized to match its parent's new dimensions and kept
   in Flate (never re-encoded to JPEG, to avoid alpha artifacts) via a scratch `lopdf::Stream::compress()`
   call that reuses lopdf's own "keep raw if compression doesn't help" logic.
+- `jpeg.rs`: `JpegEncoder` (`Profile::jpeg_encoder`, `--tune jpeg=mozjpeg|rust`): mozjpeg when
+  compiled in, else `jpeg-encoder` (baseline, optimized Huffman, mozjpeg's ImageMagick quant tables
+  and 4:2:0; CMYK unsubsampled, inverted before encoding so stored samples match mozjpeg's). It is
+  ~15–20 % bigger than mozjpeg at the levels' settings (~10–15 % at equal SSIM; no trellis
+  quantization) but ~2× faster natively — jpeg-encoder's progressive mode is *bigger* than its
+  baseline. Every JPEG — sources and re-encoded candidates (SSIM search, fidelity) — is decoded by
+  `jpeg::decode` (pure-Rust `jpeg-decoder`, matches libjpeg within IDCT rounding); the `image`
+  crate is built without its `jpeg` feature (only tests/examples enable it, to write fixtures):
+  zune-jpeg 0.5 decodes jpeg-encoder's baseline + optimized-Huffman output (valid JPEG) as garbage,
+  and its plain chroma upsampling understated mozjpeg outputs' SSIM. jpeg-decoder is ~1.5× slower
+  than zune on an isolated RGB decode (44 vs 28 ms for 3000×2000 natively), invisible end to end
+  (the SSIM search's encodes dominate). CMYK JPEGs decode to stored samples via mozjpeg, else `jpeg::decode` (which
+  undoes jpeg-decoder's inversion and handles YCCK) — so for CMYK, native `jpeg=rust` can differ
+  from the web output by a few bytes.
 - `build.rs` / `version.rs`: bakes the git commit (and dirty-tree flag) into the binary via
   `cargo:rustc-env` + `env!()`, exposed at runtime as `pdfshrink_core::build_info()`. This lives in
   `pdfshrink-core` alone, not in each front end — `env!()` only resolves within the crate that writes
@@ -194,6 +228,17 @@ remembered in the webview's localStorage) the file × level jobs go through rayo
 sharing the pool the engine already uses for images. The app turns on
 `Profile::measure_fidelity`, so each result carries `Report::image_fidelity` (re-encoded images'
 luma SSIM against their sources, judged at 144 dpi; CLI: `--tune fidelity=1`).
+
+### `crates/pdfshrink-wasm` and `web/` — the web version
+
+`wasm-bindgen` bindings (`compress(bytes, level, name)` → output bytes, sizes, fidelity;
+`levelDiffersFromDesktop(level)`; `buildInfo()`), built by `scripts/build-web.sh` into `web/dist`
+with `web/index.html`, `app.js`, `worker.js`, `web.css` plus the desktop app's `app/ui/style.css`
+and `app/ui/i18n.js` copied as-is (web-only strings live under `web.*` in `i18n.js`). The engine
+runs in one module Web Worker, one job at a time; a Rust panic aborts the module (no unwinding in
+wasm, so `catch_unwind` doesn't help), the worker reports `crashed` and the page replaces it.
+Results are offered as Blob downloads (`<name>-compressed.pdf` or `<name>-<level>.pdf`). The JPEG
+warning under the level hint shows whenever a selected level `differs_from_desktop`.
 
 ### `packaging/PdfShrinker.workflow` — the Finder service template
 

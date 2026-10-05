@@ -5,15 +5,27 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["native"]
+# Everything the desktop front ends need: mozjpeg (C library), rayon threads,
+# lopdf's defaults, the persisted config and the macOS integrations. Without
+# it the crate builds for wasm32-unknown-unknown (see pdfshrink-wasm).
+native = ["mozjpeg", "parallel", "lopdf/default", "dep:directories", "dep:toml"]
+# JPEG through mozjpeg; otherwise the pure-Rust jpeg-encoder/jpeg-decoder pair.
+mozjpeg = ["dep:mozjpeg"]
+parallel = ["dep:rayon"]
+
 [dependencies]
 lopdf = { workspace = true }
 image = { workspace = true }
-mozjpeg = { workspace = true }
+mozjpeg = { workspace = true, optional = true }
+jpeg-encoder = { workspace = true }
+jpeg-decoder = { workspace = true }
 serde = { workspace = true }
-toml = { workspace = true }
-directories = { workspace = true }
+toml = { workspace = true, optional = true }
+directories = { workspace = true, optional = true }
 thiserror = { workspace = true }
-rayon = { workspace = true }
+rayon = { workspace = true, optional = true }
 flate2 = { workspace = true }
 hayro-jpeg2000 = { workspace = true }
 fax = { workspace = true }
@@ -21,3 +33,10 @@ zopfli = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Writes the JPEG fixtures of tests/ and examples/.
+image = { workspace = true, features = ["jpeg"] }
+
+[[test]]
+name = "compression"
+# Goes through `compress_file` and writes CMYK fixtures with mozjpeg.
+required-features = ["native"]

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/pdfshrink-core",
     "crates/pdfshrink-cli",
+    "crates/pdfshrink-wasm",
     "app/src-tauri",
 ]
 
@@ -13,9 +14,17 @@ license = "MIT"
 authors = ["Pascal Havé <contact@haveneer.com>"]
 
 [workspace.dependencies]
-lopdf = "0.45"
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Default features (chrono clock, rayon) are opted into by pdfshrink-core's
+# `native` feature only: the WebAssembly build has neither threads nor a clock.
+lopdf = { version = "0.45", default-features = false }
+# No codec: JPEG goes through jpeg.rs (tests and examples enable `jpeg` to write fixtures).
+image = { version = "0.25", default-features = false }
 mozjpeg = "0.10"
+jpeg-encoder = "0.7"
+# Decodes our own re-encoded JPEGs: zune-jpeg (the `image` crate's decoder) misreads
+# jpeg-encoder's baseline output with optimized Huffman tables.
+jpeg-decoder = { version = "0.3", default-features = false }
+wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 directories = "6"

@@ -1,0 +1,75 @@
+/* Web version on top of the desktop app's style.css: a scrolling page
+   instead of a fixed window. */
+
+html,
+body {
+  height: auto;
+  overflow: auto;
+}
+
+body {
+  -webkit-user-select: auto;
+  user-select: auto;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  height: auto;
+  min-height: 100vh;
+}
+
+.file-list {
+  flex: 1 0 auto;
+  overflow: visible;
+}
+
+footer {
+  min-height: 28px;
+}
+
+.jpeg-warning {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  font-size: 12px;
+}
+
+.jpeg-warning[hidden] {
+  display: none;
+}
+
+:root {
+  --warn: #b26b00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --warn: #e0a030;
+  }
+}
+
+/* A download is a link styled as the app's round icon buttons. */
+a.icon-btn {
+  color: var(--muted);
+}
+
+a.icon-btn[hidden] {
+  display: none;
+}
+
+@media (max-width: 520px) {
+  main {
+    padding: 16px;
+  }
+
+  .file-row {
+    flex-wrap: wrap;
+  }
+
+  .file-detail {
+    max-width: 100%;
+  }
+}

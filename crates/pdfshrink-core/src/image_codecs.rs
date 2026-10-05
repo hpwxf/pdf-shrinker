@@ -1,10 +1,10 @@
-//! Decoders/encoders for the image kinds beyond 8-bit gray/RGB: CMYK JPEG
-//! (through mozjpeg), JPEG 2000 (pure-Rust `hayro-jpeg2000`), CCITT Group 4
+//! Decoders/encoders for the image kinds beyond 8-bit gray/RGB: JPEG 2000 (pure-Rust `hayro-jpeg2000`), CCITT Group 4
 //! (pure-Rust `fax`), palette (`Indexed`) and 16-bit samples. Kept apart from
-//! `image_ops.rs`, which decides *what* to do with an image.
+//! `image_ops.rs`, which decides *what* to do with an image; JPEG lives in
+//! `jpeg.rs`.
 //!
-//! Every decoder handling untrusted bytes runs under `catch_unwind`, like the
-//! mozjpeg encoder: a malformed image must only mean "leave this one alone".
+//! Every decoder handling untrusted bytes runs under `catch_unwind`: a
+//! malformed image must only mean "leave this one alone".
 
 use std::panic::{self, AssertUnwindSafe};
 
@@ -62,7 +62,7 @@ pub fn decode_jpx(data: &[u8]) -> Option<JpxImage> {
 }
 
 /// Whether a JPEG carries an Adobe APP14 marker. CMYK JPEGs with one are
-/// conventionally stored inverted (Photoshop); mozjpeg writes one too.
+/// conventionally stored inverted (Photoshop); `jpeg::encode` writes one too.
 pub fn jpeg_has_adobe_marker(jpeg: &[u8]) -> bool {
     let mut i = 2;
     while i + 4 <= jpeg.len() && jpeg[i] == 0xFF {
@@ -77,35 +77,6 @@ pub fn jpeg_has_adobe_marker(jpeg: &[u8]) -> bool {
         i += 2 + len;
     }
     false
-}
-
-/// Decodes a CMYK JPEG to its *stored* 4-channel samples (no inversion).
-pub fn decode_cmyk_jpeg(jpeg: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
-    panic::catch_unwind(AssertUnwindSafe(|| -> Option<(u32, u32, Vec<u8>)> {
-        let d = mozjpeg::Decompress::new_mem(jpeg).ok()?;
-        let mut started = d.to_colorspace(mozjpeg::ColorSpace::JCS_CMYK).ok()?;
-        let (w, h) = (started.width() as u32, started.height() as u32);
-        let data: Vec<u8> = started.read_scanlines::<u8>().ok()?;
-        started.finish().ok()?;
-        (data.len() == w as usize * h as usize * 4).then_some((w, h, data))
-    }))
-    .ok()
-    .flatten()
-}
-
-/// Encodes 4-channel samples as a CMYK JPEG. libjpeg writes an Adobe APP14
-/// marker for CMYK, and stores the samples as given.
-pub fn encode_cmyk_jpeg(data: &[u8], w: u32, h: u32, quality: u8) -> Option<Vec<u8>> {
-    panic::catch_unwind(AssertUnwindSafe(|| -> std::io::Result<Vec<u8>> {
-        let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_CMYK);
-        comp.set_size(w as usize, h as usize);
-        comp.set_quality(quality as f32);
-        let mut started = comp.start_compress(Vec::new())?;
-        started.write_scanlines(data)?;
-        started.finish()
-    }))
-    .ok()?
-    .ok()
 }
 
 /// Reduces 16-bit big-endian samples to 8 bits (high byte).
@@ -285,23 +256,6 @@ mod tests {
             unpack_samples(&[0b0001_1011, 0b1100_0000], 5, 1, 2).unwrap(),
             vec![0, 1, 2, 3, 3]
         );
-    }
-
-    #[test]
-    fn cmyk_jpeg_round_trips_and_carries_an_adobe_marker() {
-        let (w, h) = (32u32, 16u32);
-        let data: Vec<u8> = (0..w * h * 4).map(|i| (i % 251) as u8).collect();
-        let jpeg = encode_cmyk_jpeg(&data, w, h, 95).unwrap();
-        assert!(jpeg_has_adobe_marker(&jpeg));
-        let (dw, dh, back) = decode_cmyk_jpeg(&jpeg).unwrap();
-        assert_eq!((dw, dh), (w, h));
-        let err: f64 = data
-            .iter()
-            .zip(&back)
-            .map(|(a, b)| (*a as f64 - *b as f64).abs())
-            .sum::<f64>()
-            / data.len() as f64;
-        assert!(err < 8.0, "mean abs error {err}");
     }
 
     #[test]

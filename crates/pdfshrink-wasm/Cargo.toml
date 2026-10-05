@@ -1,0 +1,15 @@
+[package]
+name = "pdfshrink-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pdfshrink-core = { path = "../pdfshrink-core", default-features = false }
+wasm-bindgen = { workspace = true }
+# lopdf pulls getrandom, which needs to be told it runs in a browser.
+lopdf = { workspace = true, features = ["wasm_js"] }

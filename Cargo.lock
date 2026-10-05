@@ -1553,9 +1553,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2201,6 +2203,18 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
 ]
+
+[[package]]
+name = "jpeg-decoder"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+
+[[package]]
+name = "jpeg-encoder"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0370574b86f7eca156b9f298392b5e69a23f8c86f3f865add60bbc2e79467a6"
 
 [[package]]
 name = "js-sys"
@@ -2883,6 +2897,8 @@ dependencies = [
  "flate2",
  "hayro-jpeg2000",
  "image",
+ "jpeg-decoder",
+ "jpeg-encoder",
  "lopdf",
  "mozjpeg",
  "rayon",
@@ -2891,6 +2907,15 @@ dependencies = [
  "thiserror 2.0.21",
  "toml 0.8.23",
  "zopfli",
+]
+
+[[package]]
+name = "pdfshrink-wasm"
+version = "0.2.0"
+dependencies = [
+ "lopdf",
+ "pdfshrink-core",
+ "wasm-bindgen",
 ]
 
 [[package]]

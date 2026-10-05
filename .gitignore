@@ -9,3 +9,6 @@
 
 # scripts/make-test-pdfs.sh default output
 /test-pdfs/
+
+# scripts/build-web.sh output
+/web/dist/

@@ -26,14 +26,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::panic::{self, AssertUnwindSafe};
 
 use image::{GrayImage, RgbImage};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, StringFormat};
-use rayon::prelude::*;
 
 use crate::engine::ImageFidelity;
 use crate::image_codecs;
+use crate::jpeg::{self, JpegColor};
 use crate::level::Profile;
 use crate::placement::{self, Placement};
 
@@ -114,10 +113,7 @@ pub fn resample_images(
         );
     }
 
-    let plans: Vec<Plan> = jobs
-        .into_par_iter()
-        .filter_map(|job| plan_one(job, profile, fallback_pt))
-        .collect();
+    let plans: Vec<Plan> = crate::par::filter_map(jobs, |job| plan_one(job, profile, fallback_pt));
 
     let resampled = plans.len();
     let fidelity = ImageFidelity::from_scores(plans.iter().filter_map(|p| p.fidelity));
@@ -654,7 +650,7 @@ fn decode_pixels(
             let jpeg = jpeg_bytes(stream, filter)?;
             match color? {
                 ColorKind::Cmyk => {
-                    let (dw, dh, data) = image_codecs::decode_cmyk_jpeg(&jpeg)?;
+                    let (dw, dh, data) = jpeg::decode_cmyk(&jpeg)?;
                     if (dw, dh) != (w, h) {
                         return None;
                     }
@@ -676,11 +672,27 @@ fn decode_pixels(
                     }
                 }
                 ColorKind::Gray | ColorKind::Rgb => {
-                    let img = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg)
-                        .ok()?;
-                    Some(plain(match color? {
-                        ColorKind::Gray => Pixels::Gray(img.into_luma8()),
-                        _ => Pixels::Rgb(img.into_rgb8()),
+                    // Decoded like the re-encoded candidates (see `jpeg.rs`),
+                    // not through `image`'s zune-jpeg, which misreads some
+                    // valid baseline files.
+                    let (dw, dh, decoded, data) = jpeg::decode(&jpeg)?;
+                    Some(plain(match (color?, decoded) {
+                        (ColorKind::Gray, JpegColor::Gray) => {
+                            Pixels::Gray(GrayImage::from_raw(dw, dh, data)?)
+                        }
+                        (ColorKind::Gray, JpegColor::Rgb) => {
+                            Pixels::Gray(GrayImage::from_raw(dw, dh, to_luma(&data))?)
+                        }
+                        (ColorKind::Rgb, JpegColor::Rgb) => {
+                            Pixels::Rgb(RgbImage::from_raw(dw, dh, data)?)
+                        }
+                        (ColorKind::Rgb, JpegColor::Gray) => Pixels::Rgb(RgbImage::from_raw(
+                            dw,
+                            dh,
+                            data.iter().flat_map(|&v| [v, v, v]).collect(),
+                        )?),
+                        // A 4-channel JPEG under a gray/RGB colour space.
+                        _ => return None,
                     }))
                 }
                 ColorKind::Indexed { .. } => None,
@@ -811,33 +823,6 @@ fn target_dims(w: u32, h: u32, placement: Placement, profile: &Profile) -> (u32,
     let new_w = ((w as f32) * scale).round().max(1.0) as u32;
     let new_h = ((h as f32) * scale).round().max(1.0) as u32;
     (new_w, new_h)
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum JpegColor {
-    Gray,
-    Rgb,
-    Cmyk,
-}
-
-fn encode_jpeg(data: &[u8], w: u32, h: u32, color: JpegColor, quality: u8) -> Option<Vec<u8>> {
-    if color == JpegColor::Cmyk {
-        return image_codecs::encode_cmyk_jpeg(data, w, h, quality);
-    }
-    let outcome = panic::catch_unwind(AssertUnwindSafe(|| -> std::io::Result<Vec<u8>> {
-        let color_space = if color == JpegColor::Gray {
-            mozjpeg::ColorSpace::JCS_GRAYSCALE
-        } else {
-            mozjpeg::ColorSpace::JCS_RGB
-        };
-        let mut comp = mozjpeg::Compress::new(color_space);
-        comp.set_size(w as usize, h as usize);
-        comp.set_quality(quality as f32);
-        let mut started = comp.start_compress(Vec::new())?;
-        started.write_scanlines(data)?;
-        started.finish()
-    }));
-    outcome.ok()?.ok()
 }
 
 /// Re-encode `raw` as a `FlateDecode` stream via lopdf's own compressor, reusing
@@ -1345,11 +1330,11 @@ fn decoded_luma(content: &[u8], kind: &EncodedKind, w: u32, h: u32) -> Option<Ve
     match kind {
         EncodedKind::Jpeg {
             color: JpegColor::Gray | JpegColor::Rgb,
-        } => {
-            let img =
-                image::load_from_memory_with_format(content, image::ImageFormat::Jpeg).ok()?;
-            Some(img.into_luma8().into_raw())
-        }
+        } => match jpeg::decode(content)? {
+            (.., JpegColor::Gray, gray) => Some(gray),
+            (.., JpegColor::Rgb, rgb) => Some(to_luma(&rgb)),
+            _ => None,
+        },
         EncodedKind::Ccitt { .. } => {
             let bits = image_codecs::decode_g4(content, w, h, false)?;
             Some(bits_to_luma(&bits, w, h))
@@ -1572,11 +1557,11 @@ fn encode_best(
         let q = (profile.min_jpeg_quality.min(profile.jpeg_quality) as u16
             + profile.jpeg_quality as u16)
             / 2;
-        encode_jpeg(raw, w, h, color, q as u8)
+        jpeg::encode(profile.jpeg_encoder, raw, w, h, color, q as u8)
     } else if profile.ssim_target > 0.0 {
         jpeg_for_ssim(raw, w, h, color, profile)
     } else {
-        encode_jpeg(raw, w, h, color, profile.jpeg_quality)
+        jpeg::encode(profile.jpeg_encoder, raw, w, h, color, profile.jpeg_quality)
     };
     let palette = if allow_palette && (profile.palette || from_palette) && color != JpegColor::Cmyk
     {
@@ -1609,34 +1594,29 @@ fn jpeg_for_ssim(
         profile.min_jpeg_quality.min(profile.jpeg_quality),
         profile.jpeg_quality,
     );
-    let mut best = encode_jpeg(raw, w, h, color, hi)?;
+    let mut best = jpeg::encode(profile.jpeg_encoder, raw, w, h, color, hi)?;
     while lo < hi {
         let mid = (lo + hi) / 2;
-        let candidate = encode_jpeg(raw, w, h, color, mid)?;
+        let candidate = jpeg::encode(profile.jpeg_encoder, raw, w, h, color, mid)?;
         let score = match color {
             JpegColor::Gray => {
-                let decoded =
-                    image::load_from_memory_with_format(&candidate, image::ImageFormat::Jpeg)
-                        .ok()?;
-                ssim(raw, decoded.into_luma8().as_raw(), w, h, 1)
+                let (.., decoded) = jpeg::decode(&candidate)?;
+                ssim(raw, &decoded, w, h, 1)
             }
             JpegColor::Rgb => {
-                let decoded =
-                    image::load_from_memory_with_format(&candidate, image::ImageFormat::Jpeg)
-                        .ok()?
-                        .into_rgb8();
+                let (.., decoded) = jpeg::decode(&candidate)?;
                 // Luma drives the score; the worst RGB channel only acts as a
                 // guard (with some slack) so chroma damage — a thin coloured line
                 // smeared by 4:2:0 subsampling — still vetoes a quality. Using the
                 // worst channel outright made scan noise push quality to the max.
-                let luma = ssim(&to_luma(raw), &to_luma(decoded.as_raw()), w, h, 1);
-                let worst = ssim(raw, decoded.as_raw(), w, h, 3);
+                let luma = ssim(&to_luma(raw), &to_luma(&decoded), w, h, 1);
+                let worst = ssim(raw, &decoded, w, h, 3);
                 luma.min(worst + CHROMA_SLACK)
             }
             JpegColor::Cmyk => {
                 // No luma to lean on: mean of the four channels, with the worst
                 // one as a guard.
-                let (_, _, decoded) = image_codecs::decode_cmyk_jpeg(&candidate)?;
+                let (_, _, decoded) = jpeg::decode_cmyk(&candidate)?;
                 let per: Vec<f32> = (0..4)
                     .map(|c| ssim_channel(raw, &decoded, w, h, 4, c))
                     .collect();

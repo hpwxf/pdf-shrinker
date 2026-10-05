@@ -6,7 +6,6 @@
 use std::num::NonZeroU64;
 
 use lopdf::{Document, Object, ObjectId};
-use rayon::prelude::*;
 
 /// Streams bigger than this (decoded) are left as they are: Zopfli's time
 /// grows faster than its gains on them.
@@ -33,13 +32,11 @@ pub fn rezopfli_streams(doc: &mut Document) -> u64 {
         })
         .collect();
 
-    let results: Vec<(ObjectId, Vec<u8>, usize)> = jobs
-        .into_par_iter()
-        .filter_map(|(id, decoded, old_len)| {
+    let results: Vec<(ObjectId, Vec<u8>, usize)> =
+        crate::par::filter_map(jobs, |(id, decoded, old_len)| {
             let out = zopfli_zlib(&decoded)?;
             (out.len() < old_len).then_some((id, out, old_len))
-        })
-        .collect();
+        });
 
     let mut saved = 0u64;
     for (id, bytes, old_len) in results {

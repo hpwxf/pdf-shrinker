@@ -80,6 +80,19 @@ window.I18N = (() => {
         build: "PdfShrinker {version}\ncommit {commit}{dirty}",
         dirtySuffix: " (uncommitted changes)",
       },
+      // Web (WebAssembly) version only: web/app.js.
+      web: {
+        subtitle: "Compressed in your browser: your files never leave your computer.",
+        loading: "Loading the compression engine…",
+        engineFailed: "The compression engine failed to load: {error}",
+        crashed: "the compression engine crashed on this file",
+        download: "Download",
+        jpegWarning:
+          "Web version: this level re-encodes images with a different JPEG encoder than the desktop app (mozjpeg isn't available in the browser); the file can differ, and is often bigger.",
+        jpegWarningCompare:
+          "Web version: levels that re-encode images use a different JPEG encoder than the desktop app (mozjpeg isn't available in the browser); results can differ, and are often bigger.",
+        build: "PdfShrinker web {version}",
+      },
     },
     fr: {
       app: {
@@ -152,6 +165,18 @@ window.I18N = (() => {
       info: {
         build: "PdfShrinker {version}\ncommit {commit}{dirty}",
         dirtySuffix: " (modifications non commitées)",
+      },
+      web: {
+        subtitle: "Compressé dans votre navigateur : vos fichiers ne quittent pas votre ordinateur.",
+        loading: "Chargement du moteur de compression…",
+        engineFailed: "Le moteur de compression n'a pas pu être chargé : {error}",
+        crashed: "le moteur de compression a planté sur ce fichier",
+        download: "Télécharger",
+        jpegWarning:
+          "Version web : ce niveau réencode les images avec un autre encodeur JPEG que l'application de bureau (mozjpeg n'est pas disponible dans le navigateur) ; le fichier peut différer, et il est souvent plus gros.",
+        jpegWarningCompare:
+          "Version web : les niveaux qui réencodent les images utilisent un autre encodeur JPEG que l'application de bureau (mozjpeg n'est pas disponible dans le navigateur) ; les résultats peuvent différer, et sont souvent plus gros.",
+        build: "PdfShrinker web {version}",
       },
     },
   };

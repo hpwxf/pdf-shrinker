@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PdfShrinker</title>
+  <!-- style.css and i18n.js are the desktop app's (app/ui), copied by scripts/build-web.sh. -->
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="web.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <div class="lang-switch" role="group" data-i18n-title="lang.label">
+        <button type="button" class="lang-btn" data-lang="fr">FR</button>
+        <button type="button" class="lang-btn" data-lang="en">EN</button>
+      </div>
+      <h1>PdfShrinker</h1>
+      <p class="subtitle" data-i18n="web.subtitle"></p>
+    </header>
+
+    <section id="drop-zone" class="drop-zone">
+      <p data-i18n="drop.hint"></p>
+      <button id="pick-files" data-i18n="drop.pick"></button>
+      <input id="file-input" type="file" accept=".pdf,application/pdf" multiple hidden />
+    </section>
+
+    <section class="options">
+      <span class="options-caption" data-i18n="options.level"></span>
+      <div class="options-row">
+        <select id="level-select">
+          <option value="lossless" data-i18n="level.lossless"></option>
+          <option value="low" data-i18n="level.low"></option>
+          <option value="medium" data-i18n="level.medium"></option>
+          <option value="high" data-i18n="level.high"></option>
+          <option value="extreme" data-i18n="level.extreme"></option>
+          <option value="extreme-max" data-i18n="level.extremeMax"></option>
+        </select>
+        <label class="checkbox">
+          <input type="checkbox" id="compare-all" />
+          <span data-i18n="options.compareAll"></span>
+        </label>
+      </div>
+      <p id="level-hint" class="level-hint"></p>
+      <p id="jpeg-warning" class="jpeg-warning" role="note" hidden></p>
+    </section>
+
+    <section class="actions">
+      <button id="compress-btn" disabled data-i18n="actions.compress"></button>
+      <button id="clear-btn" class="secondary" data-i18n="actions.clear"></button>
+    </section>
+
+    <p id="engine-status" class="status"></p>
+
+    <ul id="file-list" class="file-list"></ul>
+
+    <footer>
+      <button type="button" id="build-info" class="build-info" aria-describedby="build-info-tooltip"></button>
+      <div id="build-info-tooltip" class="build-info-tooltip" role="tooltip" hidden></div>
+    </footer>
+  </main>
+
+  <script src="i18n.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
