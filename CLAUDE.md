@@ -128,7 +128,7 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   (lossless passes on, nothing geometry/look-changing); `Level::summary()` is the one-line
   description `--help` prints (the app has translated copies in `app/ui/i18n.js` — keep them in
   sync). Lossless passes (deep dedup, font merge, CFF) run at every level; gray/palette/SMask
-  tricks at every lossy level; SSIM quality from `high` up; `page_px`, crop, `scan_whiten` and
+  tricks at every lossy level; SSIM quality at every lossy level (`low` ≥ 0.995, `medium` ≥ 0.99, …); `page_px`, crop, `scan_whiten` and
   Zopfli only at `extreme`/`extreme-max`. Passes: `deep_dedup.rs` (merge objects equal once *decoded*, dictionary minus
   encoding keys, iterated to a fixpoint — two images become equal once their SMasks merged);
   `font_merge.rs` (union the per-page subsets of one `CIDFontType2`/Identity TrueType font —

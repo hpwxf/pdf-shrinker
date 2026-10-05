@@ -52,9 +52,11 @@ impl Level {
                 "images untouched; duplicate objects and font subsets merged, Type 1 fonts → CFF"
             }
             Level::Low => {
-                "+ images re-encoded (JPEG q85 or lossless palette), 300 dpi when above 450 dpi"
+                "+ images re-encoded (JPEG ≤ q85 or lossless palette), 200 dpi when above 250 dpi"
             }
-            Level::Medium => "+ JPEG q75, 150 dpi when above 225 dpi",
+            Level::Medium => {
+                "+ JPEG quality per image (q50–75, SSIM ≥ 0.99), 150 dpi when above 180 dpi"
+            }
             Level::High => "+ 96 dpi when above 144 dpi, JPEG quality per image (SSIM ≥ 0.985)",
             Level::Extreme => {
                 "+ slides capped at 2200 px across, images cropped to the page, scanned paper \
@@ -76,15 +78,21 @@ impl Level {
             },
             Level::Low => Profile {
                 level: *self,
-                target_dpi: 300.0,
+                target_dpi: 200.0,
+                trigger_ratio: 1.25,
                 jpeg_quality: 85,
+                ssim_target: 0.995,
+                min_jpeg_quality: 65,
                 max_dimension: 4200,
                 ..Profile::BASE
             },
             Level::Medium => Profile {
                 level: *self,
                 target_dpi: 150.0,
+                trigger_ratio: 1.2,
                 jpeg_quality: 75,
+                ssim_target: 0.99,
+                min_jpeg_quality: 50,
                 max_dimension: 3000,
                 ..Profile::BASE
             },

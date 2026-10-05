@@ -39,9 +39,9 @@ spaces.
 | | lossless | low | medium | high | extreme | extreme-max |
 |---|---|---|---|---|---|---|
 | Image re-encoding | no | JPEG / palette | JPEG / palette | JPEG / palette | JPEG / palette | JPEG / palette |
-| JPEG quality | – | 85 fixed | 75 fixed | 40–70, SSIM ≥ 0.985 | 35–65, SSIM ≥ 0.975 | 30–55, SSIM ≥ 0.96 |
-| JPEG quality, scanned pages | – | 85 | 75 | 55 fixed | 50 fixed | 42 fixed |
-| Target DPI (trigger) | – | 300 (> 450) | 150 (> 225) | 96 (> 144) | 96 (> 115) | 72 (> 79) |
+| JPEG quality | – | 65–85, SSIM ≥ 0.995 | 50–75, SSIM ≥ 0.99 | 40–70, SSIM ≥ 0.985 | 35–65, SSIM ≥ 0.975 | 30–55, SSIM ≥ 0.96 |
+| JPEG quality, scanned pages | – | 75 fixed | 62 fixed | 55 fixed | 50 fixed | 42 fixed |
+| Target DPI (trigger) | – | 200 (> 250) | 150 (> 180) | 96 (> 144) | 96 (> 115) | 72 (> 79) |
 | Longest-side cap | – | 4200 px | 3000 px | 2000 px | 1800 px | 1400 px |
 | Page-relative cap | – | – | – | – | 2200 px wide | 1600 px wide |
 | Byte-level dedup | yes | yes | yes | yes | yes | yes |
@@ -54,6 +54,12 @@ spaces.
 | Crop to visible area | – | – | – | – | yes | yes |
 | Scanned paper whitened | – | – | – | – | yes | yes |
 | Zopfli | – | – | – | – | yes | yes |
+
+The levels aim at roughly halving the size at each step. On a 200 dpi A4 receipt scan (332 KB):
+`low` 118 KB, `medium` 56 KB, `high` 27 KB, against iLovePDF *recommended* 78 KB (150 dpi) and
+*extreme* 29 KB (72 dpi); `medium` renders closer to the original than *recommended* (SSIM 0.980
+vs 0.978). Before `low`/`medium` had an SSIM search and the 1.25/1.2 triggers, that scan was left
+at 200 dpi by both (148 and 116 KB), then dropped to 96 dpi at `high`.
 
 How to read it: an image is only **downsampled** if its effective resolution exceeds the
 threshold in parentheses, or if it exceeds one of the caps. It is, however, **always re-encoded**
@@ -183,14 +189,19 @@ TrueType font, its `cmap` subtables and non-empty glyphs (and tables per CID sub
 
 ### 3.4 Image and stream encoding
 
-- **Adaptive JPEG quality** (`high` and above): binary search for the lowest quality whose SSIM, computed
+- **Adaptive JPEG quality** (every lossy level): binary search for the lowest quality whose SSIM, computed
   against the (already resized) source image, stays above the level's threshold. The score is the
   **luma** SSIM, capped by the worst RGB channel's SSIM + 0.03: luma drives it, while damage to a
   thin coloured line (chroma subsampling) still vetoes a quality. Consequence: a fine texture may
   get a *higher* quality than a fixed one would give.
 - **Lossless palette** (every lossy level): an image with ≤ 256 colours (icon, logo, diagram) is stored as
   `Indexed` at 1/2/4/8 bits + PNG predictor + Flate, provided the result is no more than 12.5 %
-  larger than the JPEG. This avoids JPEG ringing around text and flat areas.
+  larger than the JPEG. This avoids JPEG ringing around text and flat areas. When such an image
+  would be downsampled, the palette at its *own* resolution is tried too: resampling adds edge
+  colours, so the smaller image often has to go to JPEG and ends up bigger than the full-size
+  lossless one (a 23-colour 2481×2739 map: 124 KB as a palette, 169 KB as a 200 dpi JPEG). A gray
+  image holding only pure black and white (a common way to save a scan) goes to CCITT G4 at the
+  bi-level targets instead, like a 1-bit source.
 - **Gray**: an RGB image whose three channels never differ by more than 2 levels is stored as gray
   (no chroma to encode).
 - **Transparency masks (SMask)**: always lossless (JPEG on an alpha channel produces visible halos).
@@ -222,9 +233,10 @@ A page is treated as a scan when a single image spans at least 80 % of the page 
 60 % of its pixels are light, low-saturation "paper" whose median tone is below 254. That last
 condition keeps screenshots and digitally produced pages out: their background is exactly 255.
 
-- **Fixed JPEG quality** (`high` and above): the middle of the level's quality range, instead
-  of the SSIM search. SSIM rewards reproducing scanner noise and earlier JPEG artifacts, which
-  pushed scans to the highest quality for no visible benefit.
+- **Fixed JPEG quality** (every lossy level): the middle of the level's quality range (75 at
+  `low`, 62 at `medium`), instead of the SSIM search. SSIM rewards
+  reproducing scanner noise and earlier JPEG artifacts, which pushed scans to the highest quality
+  for no visible benefit.
 - **Paper whitening** (`extreme`, `extreme-max`): a linear levels stretch that maps the paper tone
   (its median minus 20) to white. JPEG then stops spending bits on paper grain and shading: about
   25 % smaller at equal quality on a 150 dpi scan. Linear rather than a threshold, so faint pencil

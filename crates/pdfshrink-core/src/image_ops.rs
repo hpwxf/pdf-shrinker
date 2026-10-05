@@ -968,6 +968,32 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         p => p,
     };
 
+    // Few-colour images can lose more than they gain from resampling: the
+    // new edge pixels add colours, so the lossless palette no longer applies
+    // and a JPEG of the smaller image can outweigh the full-size lossless
+    // one. Also tried, keeping the smallest: black-and-white content stored
+    // as 8-bit gray (a common way to save scans) as CCITT G4 at the
+    // bi-level resolution, and any other ≤256-colour image as a palette at
+    // its own resolution. A soft mask still follows the downsampled size
+    // (it needn't match its image's), so the comparison is image to image.
+    let alternative = if keep_color_space || !profile.palette {
+        None
+    } else {
+        match &pixels {
+            Pixels::Gray(img) if is_black_and_white(img) => {
+                encode_black_and_white(img, placement, profile)
+            }
+            Pixels::Gray(img) if needs_resize => {
+                encode_palette(img.as_raw(), width, height, true, false).map(|e| (e, width, height))
+            }
+            Pixels::Rgb(img) if needs_resize => {
+                encode_palette(img.as_raw(), width, height, false, false)
+                    .map(|e| (e, width, height))
+            }
+            _ => None,
+        }
+    };
+
     let resized = match pixels {
         Pixels::Gray(img) if needs_resize => Pixels::Gray(image::imageops::resize(
             &img,
@@ -998,6 +1024,11 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         from_palette,
         !keep_color_space,
     )?;
+    let (mask_w, mask_h) = (new_w, new_h);
+    let (encoded, new_w, new_h) = match alternative {
+        Some((alt, w, h)) if alt.content.len() < encoded.content.len() => (alt, w, h),
+        _ => (encoded, new_w, new_h),
+    };
     let smask_created = matches!(smask, Some((None, _)));
     if encoded.content.len() >= original_len
         && !drop_smask
@@ -1040,6 +1071,14 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
             dict.set("BitsPerComponent", 8i64);
             encoded.content
         }
+        EncodedKind::Ccitt { parms } => {
+            dict.set("Filter", Object::Name(b"CCITTFaxDecode".to_vec()));
+            dict.set("DecodeParms", parms);
+            dict.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+            dict.set("BitsPerComponent", 1i64);
+            dict.remove(b"Decode");
+            encoded.content
+        }
         EncodedKind::Palette {
             colorspace,
             bpc,
@@ -1061,8 +1100,8 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     } else if let Some((sid, alpha)) = smask {
         let (aw, ah) = smask_dims.unwrap_or(alpha.dimensions());
         let (cw, chh) = alpha.dimensions();
-        let alpha = if new_w < cw || new_h < chh {
-            image::imageops::resize(&alpha, new_w, new_h, image::imageops::FilterType::Lanczos3)
+        let alpha = if mask_w < cw || mask_h < chh {
+            image::imageops::resize(&alpha, mask_w, mask_h, image::imageops::FilterType::Lanczos3)
         } else {
             alpha
         };
@@ -1172,11 +1211,7 @@ fn plan_bilevel(
         return Some(None);
     };
 
-    let mut bilevel = *profile;
-    bilevel.target_dpi *= BILEVEL_RESOLUTION_FACTOR;
-    bilevel.max_dimension = (bilevel.max_dimension as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
-    bilevel.page_px = (bilevel.page_px as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
-    let (new_w, new_h) = target_dims(w, h, placement, &bilevel);
+    let (new_w, new_h) = target_dims(w, h, placement, &bilevel_profile(profile));
     let bits = if (new_w, new_h) != (w, h) {
         // Which sample value paints: 0 unless a /Decode [1 0] inverts it.
         let inverted = stream
@@ -1195,12 +1230,7 @@ fn plan_bilevel(
         .map(|g4| {
             let mut dict = stream.dict.clone();
             dict.set("Filter", Object::Name(b"CCITTFaxDecode".to_vec()));
-            let mut parms = Dictionary::new();
-            parms.set("K", -1i64);
-            parms.set("Columns", new_w as i64);
-            parms.set("Rows", new_h as i64);
-            parms.set("BlackIs1", false);
-            dict.set("DecodeParms", Object::Dictionary(parms));
+            dict.set("DecodeParms", g4_parms(new_w, new_h));
             dict.set("Width", new_w as i64);
             dict.set("Height", new_h as i64);
             Plan {
@@ -1212,6 +1242,60 @@ fn plan_bilevel(
             }
         });
     Some(plan)
+}
+
+/// `profile` with its resolution targets scaled for bi-level images.
+fn bilevel_profile(profile: &Profile) -> Profile {
+    let mut p = *profile;
+    p.target_dpi *= BILEVEL_RESOLUTION_FACTOR;
+    p.max_dimension = (p.max_dimension as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
+    p.page_px = (p.page_px as f32 * BILEVEL_RESOLUTION_FACTOR) as u32;
+    p
+}
+
+fn g4_parms(w: u32, h: u32) -> Object {
+    let mut parms = Dictionary::new();
+    parms.set("K", -1i64);
+    parms.set("Columns", w as i64);
+    parms.set("Rows", h as i64);
+    parms.set("BlackIs1", false);
+    Object::Dictionary(parms)
+}
+
+fn is_black_and_white(img: &GrayImage) -> bool {
+    img.pixels().all(|p| p.0[0] == 0 || p.0[0] == 255)
+}
+
+/// A gray image holding only black and white pixels, as 1-bit CCITT G4
+/// downsampled (if at all) to the bi-level targets, like a 1-bit source.
+fn encode_black_and_white(
+    img: &GrayImage,
+    placement: Placement,
+    profile: &Profile,
+) -> Option<(Encoded, u32, u32)> {
+    let (w, h) = img.dimensions();
+    let row = (w as usize).div_ceil(8);
+    let mut bits = vec![0u8; row * h as usize];
+    for (x, y, p) in img.enumerate_pixels() {
+        if p.0[0] == 255 {
+            bits[y as usize * row + x as usize / 8] |= 1 << (7 - x % 8);
+        }
+    }
+    let (nw, nh) = target_dims(w, h, placement, &bilevel_profile(profile));
+    if (nw, nh) != (w, h) {
+        bits = image_codecs::downsample_bilevel(&bits, w, h, nw, nh, 0);
+    }
+    let content = image_codecs::encode_g4(&bits, nw, nh)?;
+    Some((
+        Encoded {
+            content,
+            kind: EncodedKind::Ccitt {
+                parms: g4_parms(nw, nh),
+            },
+        },
+        nw,
+        nh,
+    ))
 }
 
 fn decode_smask(stream: &Stream) -> Option<GrayImage> {
@@ -1269,6 +1353,10 @@ enum EncodedKind {
         bpc: u8,
         parms: Object,
     },
+    /// 1-bit DeviceGray, CCITT Group 4.
+    Ccitt {
+        parms: Object,
+    },
 }
 
 struct Encoded {
@@ -1281,9 +1369,11 @@ struct Encoded {
 /// lossless palette whenever it isn't much bigger than the JPEG
 /// (`allow_palette` false: never, the colour space must stay as it is).
 ///
-/// Scanned pages get a fixed quality instead (the middle of the level's
-/// range): SSIM rewards reproducing scanner noise and earlier JPEG artifacts,
-/// which drove their quality to the maximum for no visible benefit.
+/// Scanned pages get a fixed quality instead, the middle of the level's
+/// `[min_jpeg_quality, jpeg_quality]` range (also at levels without SSIM
+/// search): SSIM rewards reproducing scanner noise and earlier JPEG
+/// artifacts, which drove their quality to the maximum for no visible
+/// benefit.
 ///
 /// Palette sources (`from_palette`) always try the lossless palette: unless
 /// resized, they can't have more than 256 colours.
@@ -1301,7 +1391,7 @@ fn encode_best(
         Pixels::Rgb(img) => (img.as_raw().as_slice(), JpegColor::Rgb),
         Pixels::Cmyk(img) => (img.data.as_slice(), JpegColor::Cmyk),
     };
-    let jpeg = if scan && profile.ssim_target > 0.0 {
+    let jpeg = if scan && profile.min_jpeg_quality > 0 {
         let q = (profile.min_jpeg_quality.min(profile.jpeg_quality) as u16
             + profile.jpeg_quality as u16)
             / 2;
@@ -1692,6 +1782,32 @@ mod tests {
         dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
         dict.set("DecodeParms", parms);
         Stream::new(dict, content).decompressed_content().unwrap()
+    }
+
+    #[test]
+    fn black_and_white_gray_becomes_g4_at_the_bilevel_target() {
+        let (w, h) = (1200u32, 900u32);
+        let img = GrayImage::from_fn(w, h, |x, y| {
+            image::Luma([if (x / 3 + y / 7) % 5 == 0 { 0 } else { 255 }])
+        });
+        assert!(is_black_and_white(&img));
+        // 600 dpi on the page; medium: 150 dpi colour target, 300 dpi bi-level.
+        let placement = Placement {
+            dpi: 600.0,
+            page_px: 2400.0,
+            visible: [0.0, 0.0, 1.0, 1.0],
+            via_dicts: 1,
+        };
+        let (enc, nw, nh) =
+            encode_black_and_white(&img, placement, &crate::Level::Medium.profile()).unwrap();
+        assert_eq!((nw, nh), (600, 450));
+        assert!(matches!(enc.kind, EncodedKind::Ccitt { .. }));
+        let bits = image_codecs::decode_g4(&enc.content, nw, nh, false).unwrap();
+        assert_eq!(bits.len(), (nw as usize).div_ceil(8) * nh as usize);
+
+        let mut gray = img.clone();
+        gray.put_pixel(5, 5, image::Luma([128]));
+        assert!(!is_black_and_white(&gray));
     }
 
     #[test]

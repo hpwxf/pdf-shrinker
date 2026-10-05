@@ -30,8 +30,8 @@ window.I18N = (() => {
       },
       levelHint: {
         lossless: "Images untouched; duplicate objects and fonts merged. No visible change.",
-        low: "Images re-encoded at high quality (JPEG 85), reduced only above 450 dpi. Fit for print.",
-        medium: "JPEG 75, images reduced to 150 dpi. For screen and office printing.",
+        low: "Images re-encoded at high quality (JPEG up to 85), reduced to 200 dpi above 250 dpi. Fit for print.",
+        medium: "Images at 150 dpi, JPEG quality tuned per image (up to 75). For screen and office printing.",
         high: "Images at 96 dpi, JPEG quality tuned per image to stay faithful. For the screen.",
         extreme: "Also caps slide images, crops images to the page and whitens scanned paper. Slower.",
         extremeMax: "Smallest file: 72 dpi, lower quality. Visibly degraded when zoomed in.",
@@ -94,8 +94,8 @@ window.I18N = (() => {
       },
       levelHint: {
         lossless: "Images intactes ; objets et polices en double fusionnés. Aucun changement visible.",
-        low: "Images réencodées en haute qualité (JPEG 85), réduites seulement au-delà de 450 dpi. Pour l'impression.",
-        medium: "JPEG 75, images réduites à 150 dpi. Pour l'écran et l'impression bureautique.",
+        low: "Images réencodées en haute qualité (JPEG jusqu'à 85), réduites à 200 dpi au-delà de 250 dpi. Pour l'impression.",
+        medium: "Images à 150 dpi, qualité JPEG ajustée image par image (jusqu'à 75). Pour l'écran et l'impression bureautique.",
         high: "Images à 96 dpi, qualité JPEG ajustée image par image pour rester fidèle. Pour l'écran.",
         extreme: "Limite aussi les images de slides, recadre les images à la page et blanchit le papier des scans. Plus lent.",
         extremeMax: "Fichier le plus petit : 72 dpi, qualité réduite. Dégradation visible en zoomant.",
