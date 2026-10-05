@@ -140,9 +140,45 @@ finds every CFF glyph's outline and advance width identical to the Type 1 origin
 renders pixel-identical before and after conversion, with poppler (all pages) and Ghostscript
 (40 pages of the thesis).
 
+- **Simple TrueType** (`/Subtype /TrueType`, single-byte codes, as Word writes them), in
+  `font_merge.rs` too. Those subsets keep the original glyph IDs, so the merge is the same per-GID
+  union plus a union of the `cmap` subtables (formats 0, 4, 6; a code sent to two different glyphs
+  blocks the merge). The result is cut to the highest glyph kept: each Word subset otherwise still
+  carries the `hmtx`/`loca`/`post`/`cmap` of the whole font (3,415 glyphs for 50 used). The
+  `cmap` keeps entries pointing at a drawn glyph, plus the space codes. Skipped when the font has
+  an `/Encoding` with `/Differences` (glyph names resolve through `post`, which is dropped) or
+  when its program is shared with a descriptor that can't be repointed.
+- **`name` table**, every TrueType program we rewrite: reduced to the English name IDs 1 to 6.
+  Skia (Chrome) writes 7 KB of licence text per subset.
+
+- **Incomplete CFF subsets** (`FontFile3`, `Type1C` and `CIDFontType0C`), in `cff_subset.rs`.
+  Some exporters empty the unused glyphs and stop there. A Canva CID-keyed Montserrat subset is
+  41 KB for ~20 glyphs (2 KB of charstrings): 17 KB of glyph names nothing reads (CID-keyed fonts
+  select glyphs by CID), 10 KB of global subroutines (25 of 665 called) and a 1,946-entry
+  CharStrings INDEX. A Prince-written Noto Serif SC "subset" keeps 2 glyphs and all 27,000 local
+  subroutines (540 KB). Every charstring is walked (`callsubr`/`callgsubr` followed, stems
+  counted to skip `hintmask` bytes). Unreached subroutines become a 1-byte `return` and each subr
+  INDEX is cut after its last used entry, never below the length that would change the subr-number
+  bias. No charstring changes. CID-keyed fonts also lose their unused strings and, when `.notdef`
+  draws nothing, every glyph that draws nothing: the charset is rebuilt over the remaining glyphs,
+  so CIDs keep selecting the same outlines and a missing CID falls back to the blank `.notdef`
+  (widths come from `/W`). DICTs are copied byte for byte except offsets and string ids. A
+  computed subroutine number, an unknown operator, CFF2 or an OpenType wrapper leaves the program
+  untouched, and so does a program that doesn't shrink. Gains on the `~/Downloads` corpus (`high`):
+  `NB couverture devis` 457 → 20 KB, three Canva exports 3.82 → 3.68 MB, 1.60 → 1.51 MB and
+  506 → 464 KB, a dozen LaTeX/InDesign PDFs a few hundred bytes. Outlines checked: every kept
+  glyph's charstring, subroutines expanded, is byte-identical to the original (fontTools reads every
+  rewritten program), and all 1,200+ pages of the 24 affected files render pixel-identical.
+  `--tune cff_subset=0` turns the pass off.
+
 Not handled: merging CFF subsets (`FontFile3`, e.g. the `f-0-0` fonts cairo writes for
-matplotlib figures), simple TrueType fonts (`/TrueType`, whose `cmap` differs from one subset to
-the next), and Type3 fonts (only merged when strictly identical).
+matplotlib figures; once completed by `cff_subset.rs`, the Canva ones left are ~2.5 KB each and
+use identical subroutines at equal indices, so a union would be easy but would save ~10 KB per
+file), desubroutinizing CFF (~3 KB more per Canva subset), **TrueType subsets with renumbered GIDs** (Skia/Chrome: glyphs 0..N packed,
+so the same GID means different glyphs in two subsets — the thesis's 13 `TimesNewRomanPSMT`
+programs, 165 KB), and Type3 fonts (only merged when strictly identical).
+`cargo run --release -p pdfshrink-core --example ttprobe -- file.pdf [BaseFont]` shows, per simple
+TrueType font, its `cmap` subtables and non-empty glyphs (and tables per CID subset).
 
 ### 3.4 Image and stream encoding
 
@@ -447,8 +483,11 @@ engine instead (see `TODO.md`).
 
 ## 5. Known limitations and next steps
 
-- CFF (`FontFile3`) and simple TrueType subsets are not merged; Type3 fonts only when strictly
-  identical. That's the remaining font gap with iLovePDF on the thesis (1.18 vs 0.81–0.94 MB).
+- CFF (`FontFile3`) subsets are completed (`cff_subset.rs`) but not merged; Type3 fonts only when strictly identical. TrueType
+  subsets with renumbered GIDs (Skia/Chrome) are not merged either; doing it would mean a
+  `CIDToGIDMap` stream per font dictionary mapping each old GID to the merged program's, with no
+  content or `/W` rewrite. That's most of the remaining font gap with iLovePDF on the thesis
+  (fonts ≈ 1.1 MB vs 0.81–0.94 MB).
 - Type 1 → CFF conversion keeps outlines exact but simplifies hints (no hint replacement), which
   could slightly change hinted rendering at very small sizes.
 - JBIG2 (generic region) encoding would compress bi-level images better than CCITT G4; JBIG2 and

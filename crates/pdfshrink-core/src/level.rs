@@ -173,6 +173,10 @@ pub struct Profile {
     /// one non-overlapping set), which only affects hinted rendering at small
     /// sizes.
     pub cff: bool,
+    /// Finish incomplete CFF subsets (`/FontFile3`): drop unreachable
+    /// subroutines, unused strings and, in CID-keyed fonts, empty glyphs.
+    /// Lossless — same outlines.
+    pub cff_subset: bool,
     /// Re-deflate every non-image Flate stream with Zopfli. Lossless, slow
     /// (~3× the run time for a few % smaller).
     pub zopfli: bool,
@@ -216,6 +220,7 @@ impl Profile {
         deep_dedup: true,
         merge_fonts: true,
         cff: true,
+        cff_subset: true,
         zopfli: false,
         detect_gray: true,
         palette: true,
@@ -226,7 +231,7 @@ impl Profile {
 
     /// Keys accepted by [`Profile::tune`].
     pub const TUNABLE: &'static str = "dpi, trigger, quality, max_dim, page_px, ssim, min_quality \
-        (numbers); dedup, fonts, cff, zopfli, gray, palette, opaque_smask, crop, scan_whiten (0/1)";
+        (numbers); dedup, fonts, cff, cff_subset, zopfli, gray, palette, opaque_smask, crop, scan_whiten (0/1)";
 
     /// Override one parameter from a `key=value` string, for experimenting
     /// with variants from the CLI (`--tune page_px=1800`).
@@ -253,6 +258,7 @@ impl Profile {
             "dedup" => self.deep_dedup = b()?,
             "fonts" => self.merge_fonts = b()?,
             "cff" => self.cff = b()?,
+            "cff_subset" => self.cff_subset = b()?,
             "zopfli" => self.zopfli = b()?,
             "gray" => self.detect_gray = b()?,
             "palette" => self.palette = b()?,

@@ -3,6 +3,7 @@
 //!
 //! [`compress_file`] is the single entry point every front end should call.
 
+mod cff_subset;
 mod cff_tables;
 mod compress;
 mod config;

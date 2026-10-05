@@ -45,6 +45,9 @@ cargo run --release -p pdfshrink-core --example inspect_images -- file.pdf
 # decoded; per-font embedded programs (spots un-merged per-page font subsets)
 cargo run --release -p pdfshrink-core --example analyze -- file.pdf
 cargo run --release -p pdfshrink-core --example fonts -- file.pdf
+# Simple TrueType fonts (cmap, non-empty glyphs) / every FontFile3 program written to <dir>/*.cff
+cargo run --release -p pdfshrink-core --example ttprobe -- file.pdf [BaseFontSubstring]
+cargo run --release -p pdfshrink-core --example dump_fontfile3 -- file.pdf <dir>
 
 # Levels: lossless, low, medium (default), high, extreme, extreme-max (same list in CLI and app).
 # --tune overrides one profile knob (repeatable), --suffix names the output <name>-<suffix>.pdf,
@@ -136,7 +139,10 @@ actually smaller (`Outcome::NotSmaller` otherwise, nothing written).
   CFF `/FontFile3` `/Subtype /Type1C`: charstrings interpreted to absolute outlines — subrs
   expanded, flex → curves, seac kept — and re-encoded as Type 2, built-in encoding preserved, stems
   merged into one non-overlapping set, hint replacement dropped; standard strings in
-  `cff_tables.rs`, generated from fontTools); `zopfli_pass.rs` (re-deflate non-image Flate streams);
+  `cff_tables.rs`, generated from fontTools); `cff_subset.rs` (completes sloppy CFF subsets:
+  unreached subrs → `return` stubs without changing the bias, CID-keyed fonts lose unused strings
+  and, when `.notdef` is blank, every blank glyph via a rebuilt charset; no charstring is rewritten);
+  `zopfli_pass.rs` (re-deflate non-image Flate streams);
   and in `image_ops.rs`: page-relative resolution cap (`page_px`, pixels across the page's
   *displayed width* — DPI is meaningless for 1920×1080 pt slide pages), JPEG quality chosen per
   image by binary search on SSIM (luma, with the worst RGB channel + 0.03 as a chroma guard),

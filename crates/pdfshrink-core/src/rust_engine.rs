@@ -11,7 +11,7 @@ use crate::engine::{Engine, Report};
 use crate::image_ops;
 use crate::level::Profile;
 use crate::{PdfShrinkError, Result};
-use crate::{deep_dedup, font_merge, type1_cff, type1_merge, zopfli_pass};
+use crate::{cff_subset, deep_dedup, font_merge, type1_cff, type1_merge, zopfli_pass};
 
 /// Pure-Rust compression engine: structural cleanup (dead-object pruning, stream
 /// dedup, Flate recompression) plus, when the profile asks for it, image
@@ -47,12 +47,17 @@ impl Engine for RustEngine {
         }
         if profile.merge_fonts {
             let n = font_merge::merge_truetype_subsets(&mut doc)
+                + font_merge::merge_simple_truetype(&mut doc)
                 + type1_merge::merge_type1_subsets(&mut doc);
             phase.done(&format!("font merge ({n} programs merged)"));
         }
         if profile.cff {
             let n = type1_cff::convert_type1_to_cff(&mut doc);
             phase.done(&format!("Type 1 → CFF ({n} programs converted)"));
+        }
+        if profile.cff_subset {
+            let n = cff_subset::subset_cff_programs(&mut doc);
+            phase.done(&format!("CFF subset ({n} programs rewritten)"));
         }
 
         let (images_resampled, images_skipped) = if profile.resample_images {
