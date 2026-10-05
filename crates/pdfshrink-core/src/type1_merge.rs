@@ -16,7 +16,7 @@
 //! `CharStrings`, and identical decrypted charstrings/subroutines wherever two
 //! subsets both define one.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 
@@ -48,7 +48,9 @@ pub fn merge_type1_subsets(doc: &mut Document) -> usize {
         }
     }
 
-    let mut groups: HashMap<Vec<u8>, Vec<(ObjectId, Type1)>> = HashMap::new();
+    // Ordered: groups create objects, and their numbering must not depend
+    // on hashing (reproducible output).
+    let mut groups: BTreeMap<Vec<u8>, Vec<(ObjectId, Type1)>> = BTreeMap::new();
     for (ff_id, (name, _)) in &by_file {
         if name.is_empty() {
             continue;

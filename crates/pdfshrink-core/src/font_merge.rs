@@ -78,7 +78,9 @@ pub fn merge_truetype_subsets(doc: &mut Document) -> usize {
 
     // Only the CIDFontType2/Identity descriptors collected above get
     // repointed; anything else sharing a font file keeps the original.
-    let mut groups: HashMap<Vec<u8>, Vec<(ObjectId, Sfnt)>> = HashMap::new();
+    // Ordered: groups create objects, and their numbering must not depend
+    // on hashing (reproducible output).
+    let mut groups: BTreeMap<Vec<u8>, Vec<(ObjectId, Sfnt)>> = BTreeMap::new();
     for (ff_id, (name, _)) in &by_file {
         if name.is_empty() {
             continue;
@@ -215,7 +217,9 @@ pub fn merge_simple_truetype(doc: &mut Document) -> usize {
         );
     }
 
-    let mut groups: HashMap<Vec<u8>, Vec<SimpleSubset>> = HashMap::new();
+    // Ordered: groups create objects, and their numbering must not depend
+    // on hashing (reproducible output).
+    let mut groups: BTreeMap<Vec<u8>, Vec<SimpleSubset>> = BTreeMap::new();
     for (ff_id, (name, _)) in &by_file {
         if name.is_empty() || excluded.contains(ff_id) {
             continue;
