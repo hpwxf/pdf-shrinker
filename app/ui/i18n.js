@@ -91,7 +91,8 @@ window.I18N = (() => {
           "Web version: this level re-encodes images with a different JPEG encoder than the desktop app (mozjpeg isn't available in the browser); the file can differ, and is often bigger.",
         jpegWarningCompare:
           "Web version: levels that re-encode images use a different JPEG encoder than the desktop app (mozjpeg isn't available in the browser); results can differ, and are often bigger.",
-        build: "PdfShrinker web {version}",
+        build: "PdfShrinker {version} — web version\ncommit {commit}{dirty}\nJPEG encoder: {jpeg}",
+        version: "Web version {version} ({commit})",
       },
     },
     fr: {
@@ -176,7 +177,8 @@ window.I18N = (() => {
           "Version web : ce niveau réencode les images avec un autre encodeur JPEG que l'application de bureau (mozjpeg n'est pas disponible dans le navigateur) ; le fichier peut différer, et il est souvent plus gros.",
         jpegWarningCompare:
           "Version web : les niveaux qui réencodent les images utilisent un autre encodeur JPEG que l'application de bureau (mozjpeg n'est pas disponible dans le navigateur) ; les résultats peuvent différer, et sont souvent plus gros.",
-        build: "PdfShrinker web {version}",
+        build: "PdfShrinker {version} — version web\ncommit {commit}{dirty}\nEncodeur JPEG : {jpeg}",
+        version: "Version web {version} ({commit})",
       },
     },
   };

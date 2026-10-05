@@ -232,7 +232,8 @@ luma SSIM against their sources, judged at 144 dpi; CLI: `--tune fidelity=1`).
 ### `crates/pdfshrink-wasm` and `web/` — the web version
 
 `wasm-bindgen` bindings (`compress(bytes, level, name)` → output bytes, sizes, fidelity;
-`levelDiffersFromDesktop(level)`; `buildInfo()`), built by `scripts/build-web.sh` into `web/dist`
+`levelDiffersFromDesktop(level)`; `buildInfo()` → version, commit, dirty, JPEG encoder, shown as a
+footer line plus the same "ⓘ" tooltip as the desktop app), built by `scripts/build-web.sh` into `web/dist`
 with `web/index.html`, `app.js`, `worker.js`, `web.css` plus the desktop app's `app/ui/style.css`
 and `app/ui/i18n.js` copied as-is (web-only strings live under `web.*` in `i18n.js`). The engine
 runs in one module Web Worker, one job at a time; a Rust panic aborts the module (no unwinding in

@@ -18,6 +18,7 @@ const fileList = document.getElementById("file-list");
 const engineStatus = document.getElementById("engine-status");
 const buildInfoEl = document.getElementById("build-info");
 const buildInfoTooltip = document.getElementById("build-info-tooltip");
+const versionEl = document.getElementById("version");
 
 /** Every level, in the order the select lists them (and comparisons show them). */
 const ALL_LEVELS = [...levelSelect.options].map((o) => o.value);
@@ -232,14 +233,24 @@ function renderEngineStatus() {
   if (engine.status === "failed") engineStatus.textContent = t("web.engineFailed", { error: engine.error });
 }
 
+/** Full version info for the "ⓘ" tooltip, like the desktop app's, plus the JPEG encoder. */
 function buildInfoText() {
-  return engine.build ? t("web.build", { version: engine.build }) : "";
+  const b = engine.build;
+  if (!b) return "";
+  const dirty = b.dirty ? t("info.dirtySuffix") : "";
+  // `JpegEncoder` names -> the library's own name.
+  const jpeg = { rust: "jpeg-encoder", mozjpeg: "mozjpeg" }[b.jpegEncoder] ?? b.jpegEncoder;
+  return t("web.build", { version: b.version, commit: b.commit, dirty, jpeg });
 }
 
 function renderBuildInfo() {
-  buildInfoEl.hidden = !engine.build;
+  const b = engine.build;
+  buildInfoEl.hidden = !b;
+  versionEl.hidden = !b;
+  if (!b) return;
   buildInfoEl.textContent = "ⓘ";
   buildInfoEl.title = buildInfoText();
+  versionEl.textContent = t("web.version", { version: b.version, commit: b.commit + (b.dirty ? "+" : "") });
   if (!buildInfoTooltip.hidden) buildInfoTooltip.textContent = buildInfoText();
 }
 

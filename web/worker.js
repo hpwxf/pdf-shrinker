@@ -1,7 +1,7 @@
 // Runs the WebAssembly compression engine off the page's main thread, one
 // job at a time. Messages:
 //   in : { id, level, name, bytes: ArrayBuffer }
-//   out: { type: "ready", build, differs: { level: bool } }
+//   out: { type: "ready", build: { version, commit, dirty, jpegEncoder }, differs: { level: bool } }
 //        { type: "result", id, level, output: ArrayBuffer, inputSize, outputSize, fidelity }
 //        { type: "error", id, level, message, crashed }
 // `crashed` means the module trapped (a Rust panic aborts in WebAssembly):
@@ -13,7 +13,15 @@ const LEVELS = ["lossless", "low", "medium", "high", "extreme", "extreme-max"];
 
 const ready = init().then(() => {
   const differs = Object.fromEntries(LEVELS.map((l) => [l, levelDiffersFromDesktop(l)]));
-  postMessage({ type: "ready", build: buildInfo(), differs });
+  const info = buildInfo();
+  const build = {
+    version: info.version,
+    commit: info.commit,
+    dirty: info.dirty,
+    jpegEncoder: info.jpegEncoder,
+  };
+  info.free();
+  postMessage({ type: "ready", build, differs });
 });
 ready.catch((e) => postMessage({ type: "failed", message: String(e) }));
 

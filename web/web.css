@@ -28,6 +28,20 @@ footer {
   min-height: 28px;
 }
 
+/* Visible version line; the "ⓘ" next to it has the details. */
+.version {
+  margin: 0;
+  padding-right: 24px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+
+.version[hidden] {
+  display: none;
+}
+
 .jpeg-warning {
   margin: 0;
   padding: 6px 10px;

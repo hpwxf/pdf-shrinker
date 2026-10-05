@@ -90,8 +90,41 @@ pub fn level_differs_from_desktop(level: &str) -> Result<bool, JsError> {
     Ok(parse_level(level)?.differs_from_desktop())
 }
 
-/// `"0.2.0 (210bb07)"`.
+/// Which build this is, for the page's version info.
+#[wasm_bindgen]
+pub struct Build {
+    info: pdfshrink_core::BuildInfo,
+}
+
+#[wasm_bindgen]
+impl Build {
+    #[wasm_bindgen(getter)]
+    pub fn version(&self) -> String {
+        self.info.version.to_string()
+    }
+
+    /// Short git commit hash.
+    #[wasm_bindgen(getter)]
+    pub fn commit(&self) -> String {
+        self.info.commit.to_string()
+    }
+
+    /// Built from a working tree with uncommitted changes.
+    #[wasm_bindgen(getter)]
+    pub fn dirty(&self) -> bool {
+        self.info.dirty
+    }
+
+    /// The JPEG encoder images are re-encoded with (`rust` here).
+    #[wasm_bindgen(getter, js_name = jpegEncoder)]
+    pub fn jpeg_encoder(&self) -> String {
+        Level::Medium.profile().jpeg_encoder.as_str().to_string()
+    }
+}
+
 #[wasm_bindgen(js_name = buildInfo)]
-pub fn build_info() -> String {
-    pdfshrink_core::build_info().short()
+pub fn build_info() -> Build {
+    Build {
+        info: pdfshrink_core::build_info(),
+    }
 }
