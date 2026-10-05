@@ -1,6 +1,6 @@
 [package]
 name = "pdfshrinker-app"
-version = "0.1.0"
+version = "0.2.0"
 description = "Smaller is better — and still beautiful."
 authors = ["Pascal Havé <contact@haveneer.com>"]
 license = "MIT"
