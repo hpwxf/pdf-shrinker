@@ -24,14 +24,16 @@
 //!
 //! DICTs are copied byte for byte except for offsets (and remapped string
 //! ids). Anything unexpected — a computed subroutine number, an unknown
-//! operator, CFF2, an OpenType wrapper — leaves the program untouched, as
-//! does a result that isn't smaller.
+//! operator, CFF2, an OpenType wrapper — leaves the program as it is, as
+//! does a rewrite that isn't smaller. Such a program is still re-deflated
+//! when that alone shrinks the stream (exporters often compress fonts
+//! poorly: 10 KB on an 86 KB Myriad Pro).
 
 use std::collections::HashMap;
 
 use lopdf::{Document, Object, ObjectId, Stream};
 
-/// Returns the number of font programs rewritten.
+/// Returns the number of font programs rewritten (or just re-deflated).
 pub fn subset_cff_programs(doc: &mut Document) -> usize {
     let mut targets: Vec<ObjectId> = Vec::new();
     for obj in doc.objects.values() {
@@ -58,11 +60,11 @@ pub fn subset_cff_programs(doc: &mut Document) -> usize {
         let Some(data) = decoded(stream) else {
             continue;
         };
-        // Only when the program itself shrinks: a mere re-Flate isn't worth
-        // touching the font for.
-        let Some(cff) = subset(&data).filter(|c| c.len() < data.len()) else {
-            continue;
-        };
+        // The rewrite only when the program itself shrinks; otherwise the
+        // original bytes, which may still deflate better than they were.
+        let cff = subset(&data)
+            .filter(|c| c.len() < data.len())
+            .unwrap_or(data);
         let mut dict = stream.dict.clone();
         dict.remove(b"Filter");
         dict.remove(b"DecodeParms");

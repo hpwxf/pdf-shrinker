@@ -1095,3 +1095,73 @@ fn over_resolved_ccitt_image_is_decoded_and_downsampled() {
         "ink {before:.3} -> {after:.3}"
     );
 }
+
+/// Parent colour space after compressing a gray-looking RGB image whose soft
+/// mask has (or not) a `/Matte`.
+fn parent_color_space_with_matte(matte: bool) -> Object {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("in.pdf");
+    let (w, h) = (400u32, 400u32);
+    // Photo-like: smooth shading plus noise, so JPEG beats Flate.
+    let mut seed = 1u32;
+    let raw: Vec<u8> = (0..w * h)
+        .flat_map(|i| {
+            let (x, y) = ((i % w) as f32, (i / w) as f32);
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            let v = (128.0 + 60.0 * (x / 7.0).sin() * (y / 9.0).cos()) as u8 + (seed >> 28) as u8;
+            [v, v, v]
+        })
+        .collect();
+    let mut main = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => w as i64,
+            "Height" => h as i64,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+        },
+        raw,
+    );
+    main.compress().unwrap();
+    let mut smask = make_gray_smask(w, h);
+    if matte {
+        smask
+            .dict
+            .set("Matte", Object::Array(vec![0.into(), 0.into(), 0.into()]));
+    }
+    let (mut doc, img_id) = build_single_image_pdf(
+        Stream::new(Dictionary::new(), vec![]),
+        300.0,
+        300.0,
+        150.0,
+        150.0,
+    );
+    let smask_id = doc.add_object(smask);
+    main.dict.set("SMask", Object::Reference(smask_id));
+    *doc.objects.get_mut(&img_id).unwrap() = Object::Stream(main);
+    save_and_size(&mut doc, &input);
+
+    let output = dir.path().join("out.pdf");
+    let report = RustEngine
+        .compress(&input, &output, &Level::Medium.profile())
+        .unwrap();
+    assert_eq!(report.images_resampled, 1);
+    let reloaded = Document::load(&output).unwrap();
+    let s = reloaded.get_object(img_id).unwrap().as_stream().unwrap();
+    s.dict.get(b"ColorSpace").unwrap().clone()
+}
+
+#[test]
+fn matte_keeps_the_parent_color_space() {
+    // Control: without /Matte the gray-looking image does leave DeviceRGB.
+    assert_ne!(
+        parent_color_space_with_matte(false),
+        Object::Name(b"DeviceRGB".to_vec())
+    );
+    // /Matte [0 0 0] is in the parent's colour space: it must stay RGB.
+    assert_eq!(
+        parent_color_space_with_matte(true),
+        Object::Name(b"DeviceRGB".to_vec())
+    );
+}

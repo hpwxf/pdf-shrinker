@@ -164,9 +164,10 @@ renders pixel-identical before and after conversion, with poppler (all pages) an
   so CIDs keep selecting the same outlines and a missing CID falls back to the blank `.notdef`
   (widths come from `/W`). DICTs are copied byte for byte except offsets and string ids. A
   computed subroutine number, an unknown operator, CFF2 or an OpenType wrapper leaves the program
-  untouched, and so does a program that doesn't shrink. Gains on the `~/Downloads` corpus (`high`):
+  as it is, and so does a rewrite that doesn't shrink; such a program is still re-deflated when
+  that alone helps (exporters often compress fonts poorly: 10 KB off an 86 KB Myriad Pro). Gains on the `~/Downloads` corpus (`high`):
   `NB couverture devis` 457 → 20 KB, three Canva exports 3.82 → 3.68 MB, 1.60 → 1.51 MB and
-  506 → 464 KB, a dozen LaTeX/InDesign PDFs a few hundred bytes. Outlines checked: every kept
+  506 → 464 KB, a dozen LaTeX/InDesign PDFs a few hundred bytes (mostly from re-deflating). Outlines checked: every kept
   glyph's charstring, subroutines expanded, is byte-identical to the original (fontTools reads every
   rewritten program), and all 1,200+ pages of the 24 affected files render pixel-identical.
   `--tune cff_subset=0` turns the pass off.
@@ -194,7 +195,10 @@ TrueType font, its `cmap` subtables and non-empty glyphs (and tables per CID sub
   (no chroma to encode).
 - **Transparency masks (SMask)**: always lossless (JPEG on an alpha channel produces visible halos).
   Resized along with their image; at every lossy level, dropped when fully opaque, and stored with a PNG
-  predictor when that is smaller.
+  predictor when that is smaller. A mask with `/Matte` (the parent's colours are pre-blended with
+  a colour given in the parent's colour space) pins its parent's colour space: no gray or palette
+  conversion, and a palette parent isn't re-encoded at all. Otherwise the matte no longer matches
+  (poppler: "Matte entry should have 1 components but has 3") and edges are un-blended wrongly.
 - **Zopfli** (`extreme`, `extreme-max`): stronger Flate recompression of non-image streams (page content, fonts,
   forms), still readable by any viewer. Typical gain 5–8 % on those streams, at a high CPU cost
   (45 s instead of 14 s on the slide deck).

@@ -879,6 +879,19 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
         jpx_alpha,
     } = decode_pixels(stream, job.color.as_ref(), &filter, width, height)?;
 
+    // A soft mask with `/Matte` says the parent's colours were pre-blended
+    // with that colour, given in the parent's colour space: the parent must
+    // keep the same kind of colour space (no gray or palette conversion), or
+    // the matte would no longer match it. The mask may be shared by other
+    // parents, so it can't be rewritten for this one instead.
+    let keep_color_space = job
+        .smask
+        .as_ref()
+        .is_some_and(|(_, s)| s.dict.has(b"Matte"));
+    if keep_color_space && from_palette {
+        return None;
+    }
+
     // Opaque soft masks are dropped before anything else: the parent then
     // needs no mask handling at all. A JPEG 2000 image's own alpha channel
     // stands in for a soft mask when `/SMaskInData` asks for it.
@@ -949,7 +962,7 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     }
     let scan = paper.is_some();
     let pixels = match pixels {
-        Pixels::Rgb(img) if profile.detect_gray && is_near_gray(&img) => {
+        Pixels::Rgb(img) if profile.detect_gray && !keep_color_space && is_near_gray(&img) => {
             Pixels::Gray(image::DynamicImage::ImageRgb8(img).into_luma8())
         }
         p => p,
@@ -976,7 +989,15 @@ fn plan_one(job: Job, profile: &Profile, fallback_pt: (f32, f32)) -> Option<Plan
     // Whatever the source was, the output isn't JPEG 2000 any more.
     let was_jpx = matches!(filter, FilterKind::Jpx);
     dict.remove(b"SMaskInData");
-    let encoded = encode_best(&resized, new_w, new_h, profile, scan, from_palette)?;
+    let encoded = encode_best(
+        &resized,
+        new_w,
+        new_h,
+        profile,
+        scan,
+        from_palette,
+        !keep_color_space,
+    )?;
     let smask_created = matches!(smask, Some((None, _)));
     if encoded.content.len() >= original_len
         && !drop_smask
@@ -1257,7 +1278,8 @@ struct Encoded {
 
 /// Picks the encoding: JPEG at a fixed quality, or at the lowest quality
 /// meeting `ssim_target` when set, and, for few-colour images (`palette`), a
-/// lossless palette whenever it isn't much bigger than the JPEG.
+/// lossless palette whenever it isn't much bigger than the JPEG
+/// (`allow_palette` false: never, the colour space must stay as it is).
 ///
 /// Scanned pages get a fixed quality instead (the middle of the level's
 /// range): SSIM rewards reproducing scanner noise and earlier JPEG artifacts,
@@ -1272,6 +1294,7 @@ fn encode_best(
     profile: &Profile,
     scan: bool,
     from_palette: bool,
+    allow_palette: bool,
 ) -> Option<Encoded> {
     let (raw, color) = match pixels {
         Pixels::Gray(img) => (img.as_raw().as_slice(), JpegColor::Gray),
@@ -1288,7 +1311,8 @@ fn encode_best(
     } else {
         encode_jpeg(raw, w, h, color, profile.jpeg_quality)
     };
-    let palette = if (profile.palette || from_palette) && color != JpegColor::Cmyk {
+    let palette = if allow_palette && (profile.palette || from_palette) && color != JpegColor::Cmyk
+    {
         encode_palette(raw, w, h, color == JpegColor::Gray, profile.zopfli)
     } else {
         None
