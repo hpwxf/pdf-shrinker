@@ -95,7 +95,7 @@ never reassigned.
 | [D-022](D-022-ci-and-lint-policy.md) | CI: macOS arm64, `fmt --check`, `clippy -D warnings`, `test`, all `--locked`; builds and deploys manual-only; stable toolchain, not pinned | adopted (retrospective) |
 | [D-023](D-023-build-identifier-in-core.md) | build identifier (commit + dirty flag) baked into `pdfshrink-core`, read by every front end through `build_info()` | adopted (retrospective) |
 | [D-024](D-024-ui-languages.md) | app and web in English and French (`i18n.js`, shared); CLI in English only | adopted (retrospective) |
-| [D-025](D-025-license.md) | license MIT, never written down as a decision; no `LICENSE` file | adopted (retrospective) |
+| [D-025](D-025-license.md) | license MIT at first, never written down; now `MIT OR Apache-2.0`, with `LICENSE-MIT` and `LICENSE-APACHE` | adopted (retrospective), revised |
 
 ## Questions waiting for an entry
 
