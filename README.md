@@ -59,13 +59,34 @@ without mozjpeg, hence its bigger results (see [Web version](#web-version)).
 
 Six compression levels: **Lossless** (structural cleanup only), **Low**, **Medium** (default),
 **High**, **Extreme**, **Extreme-max**. The compressed file is written next to the original (`name-compressed.pdf`); the original is
-never touched, and if the result isn't actually smaller, nothing is written.
+never touched, and if the result isn't actually smaller, nothing is written (unless annotations
+are flattened, see `--flatten` below).
 
 ## Installation
 
-Download the `.dmg` (see [Build](#build) to produce it yourself), open it, drag `PdfShrinker.app` into
-`Applications`. The app isn't signed with an Apple Developer account (ad-hoc signature only), so
-Gatekeeper will warn on first launch — right-click the app › **Open**.
+Download the `.dmg` from the [releases page](https://github.com/hpwxf/pdf-shrinker/releases) (see
+[Build](#build) to produce it yourself), open it, drag `PdfShrinker.app` into `Applications`.
+
+The app isn't signed with an Apple Developer ID nor notarized (ad-hoc signature only), so on first
+launch macOS says it *could not verify that "PdfShrinker" is free of malware*. Since macOS 15,
+right-click › **Open** no longer gets past this; either:
+
+- **System Settings**: double-click the app, dismiss the alert with **Done** (not "Move to Trash"),
+  open **System Settings › Privacy & Security**, scroll to **Security**, click **Open Anyway** next
+  to "PdfShrinker was blocked…", confirm with your password or Touch ID, then **Open** the app;
+- **Terminal**: remove the quarantine flag from the whole bundle, including the command-line tool
+  it embeds (use this if the Finder service or `pdfshrink` get blocked too):
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/PdfShrinker.app
+  ```
+
+Only do this for a `.dmg` taken from this repository's releases page. It is needed again for each
+new version downloaded.
+
+**Windows**: the installer (`PdfShrinker_<version>_x64-setup.exe`) and the command-line tool
+(`pdfshrink_<version>_x64-windows.exe`) aren't signed either. SmartScreen shows *Windows protected
+your PC*: click **More info › Run anyway**.
 
 On first launch, the **"Install the Finder service and command-line tool"** button in the app:
 
