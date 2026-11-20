@@ -1109,12 +1109,8 @@ mod tests {
         let merged = build_merged(&[((1, 0), a), ((2, 0), b)]).unwrap();
         let m = Sfnt::parse(&merged).unwrap();
         assert_eq!(m.glyphs.len(), 9);
-        for g in 0..9 {
-            assert_eq!(
-                !m.glyphs[g].is_empty(),
-                [0, 1, 3, 5, 8].contains(&g),
-                "glyph {g}"
-            );
+        for (g, glyph) in m.glyphs.iter().enumerate() {
+            assert_eq!(!glyph.is_empty(), [0, 1, 3, 5, 8].contains(&g), "glyph {g}");
         }
         assert_eq!(m.metrics[5].0, 505);
         assert_eq!(m.metrics[8].0, 508);
