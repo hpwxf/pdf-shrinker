@@ -14,7 +14,7 @@
 //! data for every GID more than one of them defines. A subset conflicting with
 //! a group simply starts (or joins) another group.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 
@@ -240,10 +240,15 @@ pub fn merge_simple_truetype(doc: &mut Document) -> usize {
         if let Some(u) = usage.get(ff_id).filter(|u| !u.mac_roman) {
             reduce_to_reachable(&mut sfnt, &cmap, u);
         }
+        let blank = usage
+            .get(ff_id)
+            .map(|u| blank_entries(&sfnt, &cmap, u.lo..=u.hi))
+            .unwrap_or_default();
         groups.entry(name.clone()).or_default().push(SimpleSubset {
             id: *ff_id,
             sfnt,
             cmap,
+            blank,
             stored,
         });
     }
@@ -391,8 +396,20 @@ struct SimpleSubset {
     id: ObjectId,
     sfnt: Sfnt,
     cmap: Vec<CmapSub>,
+    /// `cmap` entries from a code in `FirstChar..=LastChar` to a glyph without
+    /// an outline: spaces, and zero-width marks (Keynote's end-of-paragraph).
+    /// They are kept in the merged `cmap` (a missing entry shows `.notdef`, a
+    /// box), and no other subset may draw their glyph through another code.
+    blank: Vec<BlankEntry>,
     /// Size of the stored (compressed) stream, for the "is it smaller" check.
     stored: usize,
+}
+
+/// A `cmap` entry leading to an empty glyph: subtable, key, GID.
+struct BlankEntry {
+    sub: (u16, u16),
+    key: u16,
+    gid: u16,
 }
 
 /// One `cmap` subtable: (platform, encoding) and its code → GID entries.
@@ -406,6 +423,26 @@ fn simple_consistent(a: &SimpleSubset, b: &SimpleSubset) -> bool {
     if !consistent(&a.sfnt, &b.sfnt) {
         return false;
     }
+    // A blank glyph of one subset may be drawn by the other only if the other
+    // reaches it through the same code: a slot the subsetter emptied (original
+    // GIDs, whole `cmap`). Subsets that renumber their GIDs put a space and a
+    // drawn glyph at the same GID — with a fixed pitch, even the advances agree.
+    let stays_blank = |s: &SimpleSubset, other: &SimpleSubset| {
+        s.blank.iter().all(|e| {
+            other
+                .sfnt
+                .glyphs
+                .get(e.gid as usize)
+                .is_none_or(|d| d.is_empty())
+                || other
+                    .cmap
+                    .iter()
+                    .any(|y| (y.platform, y.encoding) == e.sub && y.map.get(&e.key) == Some(&e.gid))
+        })
+    };
+    if !stays_blank(a, b) || !stays_blank(b, a) {
+        return false;
+    }
     // The same char code must lead to the same glyph in both.
     a.cmap.iter().all(|x| {
         b.cmap
@@ -417,6 +454,41 @@ fn simple_consistent(a: &SimpleSubset, b: &SimpleSubset) -> bool {
                     .all(|(code, gid)| y.map.get(code).is_none_or(|g| g == gid))
             })
     })
+}
+
+/// `cmap` entries from one of `codes` to a glyph with no outline: a Mac
+/// subtable takes the code itself, a symbolic (3,0) one `0xF000 + code` or the
+/// code, a Unicode one the code when it is ASCII (the same in every simple
+/// encoding — spaces are). `.notdef` is left out.
+fn blank_entries(
+    sfnt: &Sfnt,
+    cmap: &[CmapSub],
+    codes: std::ops::RangeInclusive<u16>,
+) -> Vec<BlankEntry> {
+    let mut blank = Vec::new();
+    for sub in cmap {
+        for c in codes.clone() {
+            let keys: &[u16] = match (sub.platform, sub.encoding) {
+                (1, _) => &[c],
+                (3, 0) => &[0xF000 + c, c],
+                _ if c < 0x80 => &[c],
+                _ => &[],
+            };
+            for k in keys {
+                if let Some(&gid) = sub.map.get(k)
+                    && gid != 0
+                    && sfnt.glyphs.get(gid as usize).is_some_and(|d| d.is_empty())
+                {
+                    blank.push(BlankEntry {
+                        sub: (sub.platform, sub.encoding),
+                        key: *k,
+                        gid,
+                    });
+                }
+            }
+        }
+    }
+    blank
 }
 
 /// Parses formats 0, 4 and 6; anything else (12, 2…) makes the font ineligible
@@ -497,13 +569,20 @@ fn build_simple(cluster: &[SimpleSubset]) -> Option<Vec<u8>> {
             .any(|s| s.glyphs.get(g).is_some_and(|d| !d.is_empty()))
     };
 
+    // Blank glyphs a code in range reaches, whatever the code: Keynote puts spaces
+    // in a font of their own, at codes 33 and 34.
+    let blank: BTreeSet<u16> = cluster
+        .iter()
+        .flat_map(|s| s.blank.iter().map(|e| e.gid))
+        .collect();
+
     // Union of the cmaps, restricted to entries worth keeping.
     let mut subtables: BTreeMap<(u16, u16), BTreeMap<u16, u16>> = BTreeMap::new();
     for s in cluster {
         for sub in &s.cmap {
             let dst = subtables.entry((sub.platform, sub.encoding)).or_default();
             for (&code, &gid) in &sub.map {
-                if drawn(gid as usize) || is_space_code(code) {
+                if drawn(gid as usize) || is_space_code(code) || blank.contains(&gid) {
                     dst.insert(code, gid);
                 }
             }
@@ -627,8 +706,9 @@ fn plain(s: &Stream) -> Option<Vec<u8>> {
 }
 
 fn base_name(n: &[u8]) -> Vec<u8> {
-    // Subset prefix is "ABCDEF+".
-    if n.len() > 7 && n[6] == b'+' && n[..6].iter().all(u8::is_ascii_uppercase) {
+    // Subset prefix is "ABCDEF+". A bare prefix ("AAAAAA+") names no font: empty,
+    // so it is not grouped with every other unnamed subset.
+    if n.len() >= 7 && n[6] == b'+' && n[..6].iter().all(u8::is_ascii_uppercase) {
         n[7..].to_vec()
     } else {
         n.to_vec()
@@ -670,7 +750,25 @@ fn consistent(a: &Sfnt, b: &Sfnt) -> bool {
         }
     }
     let n = a.glyphs.len().min(b.glyphs.len());
-    (0..n).all(|g| a.glyphs[g].is_empty() || b.glyphs[g].is_empty() || a.glyphs[g] == b.glyphs[g])
+    (0..n).all(|g| match (a.glyphs[g].is_empty(), b.glyphs[g].is_empty()) {
+        (true, true) => true,
+        (false, false) => a.glyphs[g] == b.glyphs[g],
+        // An empty glyph is a slot the subsetter emptied only if it also zeroed the
+        // advance, or kept the original one (same GID, same glyph). An empty glyph
+        // with another advance is a real one — a space — in a subset that renumbered
+        // its GIDs: the other subset's glyph is a different character.
+        (true, false) => empty_matches(a, b, g),
+        (false, true) => empty_matches(b, a, g),
+    })
+}
+
+/// `empty`'s glyph `g` has no outline, `drawn`'s has one: compatible only if
+/// `empty` zeroed the slot's advance or kept the same advance as `drawn`.
+fn empty_matches(empty: &Sfnt, drawn: &Sfnt, g: usize) -> bool {
+    match (empty.metrics.get(g), drawn.metrics.get(g)) {
+        (Some(e), Some(d)) => e.0 == 0 || e.0 == d.0,
+        _ => true,
+    }
 }
 
 /// A parsed TrueType font: raw tables plus `glyf` split per glyph and `hmtx`
@@ -1011,12 +1109,8 @@ mod tests {
         let merged = build_merged(&[((1, 0), a), ((2, 0), b)]).unwrap();
         let m = Sfnt::parse(&merged).unwrap();
         assert_eq!(m.glyphs.len(), 9);
-        for g in 0..9 {
-            assert_eq!(
-                !m.glyphs[g].is_empty(),
-                [0, 1, 3, 5, 8].contains(&g),
-                "glyph {g}"
-            );
+        for (g, glyph) in m.glyphs.iter().enumerate() {
+            assert_eq!(!glyph.is_empty(), [0, 1, 3, 5, 8].contains(&g), "glyph {g}");
         }
         assert_eq!(m.metrics[5].0, 505);
         assert_eq!(m.metrics[8].0, 508);
@@ -1031,6 +1125,97 @@ mod tests {
         assert!(!consistent(&a, &b));
         let clusters = cluster_consistent(vec![((1, 0), a), ((2, 0), b)]);
         assert_eq!(clusters.len(), 2);
+    }
+
+    #[test]
+    fn a_space_is_not_merged_with_another_subsets_glyph() {
+        // Subsets that renumber their GIDs (4-Heights form fields): GID 1 is a
+        // space (no outline, advance 278) in one, an `X` in the other. Treating
+        // the empty glyph as an emptied slot would draw an X for every space.
+        let a = Sfnt::parse(&fake_subset(4, &[0, 1, 2])).unwrap();
+        let mut b = Sfnt::parse(&fake_subset(4, &[0, 2])).unwrap();
+        b.metrics[1].0 = 278;
+        assert!(!consistent(&a, &b));
+        assert!(!consistent(&b, &a));
+        // An emptied slot keeping the original advance is still the same glyph.
+        b.metrics[1].0 = a.metrics[1].0;
+        assert!(consistent(&a, &b));
+    }
+
+    fn mac(pairs: &[(u16, u16)]) -> Vec<CmapSub> {
+        vec![CmapSub {
+            platform: 1,
+            encoding: 0,
+            map: map(pairs),
+        }]
+    }
+
+    fn simple(id: u32, sfnt: Sfnt, cmap: Vec<CmapSub>) -> SimpleSubset {
+        let blank = blank_entries(&sfnt, &cmap, 0..=255);
+        SimpleSubset {
+            id: (id, 0),
+            sfnt,
+            cmap,
+            blank,
+            stored: 0,
+        }
+    }
+
+    #[test]
+    fn a_space_stays_blank_even_at_a_fixed_pitch() {
+        // Menlo subsets from Keynote, GIDs renumbered: one draws `!` at GID 1,
+        // the other's space (code 32) reaches its empty GID 1. Same advances.
+        let drawn = Sfnt::parse(&fake_subset(2, &[0, 1])).unwrap();
+        let mut spaced = Sfnt::parse(&fake_subset(3, &[0, 2])).unwrap();
+        spaced.metrics[1].0 = drawn.metrics[1].0;
+        let a = simple(1, drawn, mac(&[(33, 1)]));
+        let b = simple(2, spaced, mac(&[(32, 1), (65, 2)]));
+        assert_eq!(b.blank.len(), 1);
+        assert_eq!((b.blank[0].key, b.blank[0].gid), (32, 1));
+        assert!(
+            consistent(&a.sfnt, &b.sfnt),
+            "advances agree: only the cmap can tell"
+        );
+        assert!(!simple_consistent(&a, &b));
+        assert!(!simple_consistent(&b, &a));
+    }
+
+    #[test]
+    fn an_emptied_slot_reached_by_the_same_code_still_merges() {
+        // Word subsets keep the original GIDs and the whole cmap: `A` (GID 1) is
+        // emptied in the subset that does not show it, drawn in the other.
+        let a = simple(
+            1,
+            Sfnt::parse(&fake_subset(3, &[0, 2])).unwrap(),
+            mac(&[(65, 1), (66, 2)]),
+        );
+        let b = simple(
+            2,
+            Sfnt::parse(&fake_subset(3, &[0, 1])).unwrap(),
+            mac(&[(65, 1), (66, 2)]),
+        );
+        assert!(simple_consistent(&a, &b));
+        let merged = Sfnt::parse(&build_simple(&[a, b]).unwrap()).unwrap();
+        assert!(!merged.glyphs[1].is_empty() && !merged.glyphs[2].is_empty());
+    }
+
+    #[test]
+    fn a_blank_glyph_keeps_its_cmap_entry() {
+        // Keynote puts spaces in a font of their own, at codes 33 and 34: without
+        // their entries the codes would show `.notdef`.
+        let s = simple(
+            1,
+            Sfnt::parse(&fake_subset(3, &[0])).unwrap(),
+            mac(&[(33, 1), (34, 2)]),
+        );
+        let cmap = parse_cmap(
+            Sfnt::parse(&build_simple(&[s]).unwrap())
+                .unwrap()
+                .table(b"cmap")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cmap[0].map, map(&[(33, 1), (34, 2)]));
     }
 
     fn map(pairs: &[(u16, u16)]) -> BTreeMap<u16, u16> {
@@ -1072,6 +1257,7 @@ mod tests {
                 encoding: 1,
                 map: map(pairs),
             }],
+            blank: Vec::new(),
             stored: 0,
         };
         let a = subset(&[(65, 2), (66, 5)]);
@@ -1143,5 +1329,6 @@ mod tests {
     fn subset_prefix_is_stripped() {
         assert_eq!(base_name(b"ABCDEF+CourierNewPSMT"), b"CourierNewPSMT");
         assert_eq!(base_name(b"CourierNewPSMT"), b"CourierNewPSMT");
+        assert_eq!(base_name(b"AAAAAA+"), b"");
     }
 }

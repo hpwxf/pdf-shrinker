@@ -2,8 +2,17 @@
 
 [![CI](https://github.com/hpwxf/pdf-shrinker/actions/workflows/ci.yml/badge.svg)](https://github.com/hpwxf/pdf-shrinker/actions/workflows/ci.yml)
 
-Compresses PDFs on macOS — like iLovePDF or UPDF — shrinking file size while staying in PDF format
-(no zip). Written in Rust, Apple Silicon only.
+Compresses PDFs — like iLovePDF or UPDF — shrinking file size while staying in PDF format (no zip).
+Written in Rust; every front end runs the same compression engine.
+
+Where it runs:
+
+| Platform | Front ends | Status |
+|---|---|---|
+| macOS, Apple Silicon | CLI, app, Finder service | main target, tested in CI |
+| Windows x86_64 | CLI, app | built on demand (`.github/workflows/windows.yml`), CLI smoke-tested |
+| Any modern browser | web page | built on demand and deployed to GitHub Pages, smoke-tested in Node |
+| Other (Linux, Intel Mac) | CLI | not built or tested; may build from source |
 
 Four ways to use it:
 
@@ -113,8 +122,9 @@ ever land under **Services**.
 
 ## Build
 
-Requirements: Rust (`rustup target add aarch64-apple-darwin`), Xcode Command Line Tools, `cargo-tauri`
-(`cargo install tauri-cli --version "^2"`). No runtime dependency.
+Requirements on macOS: Rust (`rustup target add aarch64-apple-darwin`), Xcode Command Line Tools,
+`cargo-tauri` (`cargo install tauri-cli --version "^2"`). No runtime dependency. Windows builds also
+need `nasm` (for mozjpeg) and are best produced by `.github/workflows/windows.yml`.
 
 ```bash
 # CLI only
@@ -140,4 +150,14 @@ calculation for images, Tauri app structure, etc.), development commands (`cargo
 
 ## License
 
-MIT.
+Licensed under either of
+
+- Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE) or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([`LICENSE-MIT`](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
+this work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
+any additional terms or conditions.

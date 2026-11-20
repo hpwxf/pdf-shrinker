@@ -21,6 +21,12 @@ pub enum PdfShrinkError {
     #[error("page count changed while compressing {0} ({1} -> {2}); output was discarded")]
     PageCountMismatch(PathBuf, usize, usize),
 
+    #[error(
+        "{0}: stream {1} {2} R has no usable /Length and its end cannot be located; \
+         refusing to write an output that would lose it"
+    )]
+    UnreadableStream(PathBuf, u32, u16),
+
     #[error("config error: {0}")]
     Config(String),
 }

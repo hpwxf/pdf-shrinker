@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A macOS PDF compressor (Rust), à la iLovePDF/UPDF, ships three ways from one Cargo workspace:
-CLI (`pdfshrink`), a Tauri GUI (`PdfShrinker.app`), and a Finder service — all going through the
-same `pdfshrink-core` compression engine so behavior never drifts between front ends. Apple Silicon
-only (`aarch64-apple-darwin`); no x86_64/universal build. Exception: `.github/workflows/windows.yml`
+A PDF compressor (Rust), à la iLovePDF/UPDF, born on macOS: one Cargo workspace ships a CLI
+(`pdfshrink`), a Tauri GUI (`PdfShrinker.app`), a Finder service and a web version — all going
+through the same `pdfshrink-core` compression engine so behavior never drifts between front ends.
+The main target is macOS on Apple Silicon (`aarch64-apple-darwin`, the only platform CI tests on
+every push); no x86_64/universal macOS build. Windows: `.github/workflows/windows.yml`
 (manual `workflow_dispatch` on master) builds a Windows x86_64 CLI and app (static CRT, NSIS
-installer). There, `app/src-tauri/tauri.windows.conf.json` drops the CLI sidecar and Tauri's
+installer). Other platforms get the web version; a native CLI there is neither built nor tested. There, `app/src-tauri/tauri.windows.conf.json` drops the CLI sidecar and Tauri's
 `fileAssociations` (its NSIS script would take over the default PDF handler);
 `app/src-tauri/windows/pdf-open-with.nsh` registers the app as an extra "Open with" choice instead.
 The UI hides "Install integrations" (macOS-only) on Windows.
@@ -19,6 +20,16 @@ compiled to WebAssembly entirely in the browser: the server only serves static f
 core without its `native` feature, so it is single-threaded and encodes JPEGs with the pure-Rust
 `jpeg-encoder` instead of mozjpeg — its output differs from the desktop's at every level that
 re-encodes images (often bigger), and the page says so (`Level::differs_from_desktop`).
+
+## Decisions
+
+`journal/` holds the architecture decision records (ADRs): one `D-NNN-*.md` per trade-off, with
+the options set aside and what would change our minds; `journal/README.md` has the format, the
+index and the questions still waiting for an entry. Read the relevant entry before revisiting a
+choice. A new architectural decision gets its entry **before or with** the code, as the first file
+of the commit; a decision that drifts is revised in place (dated section), never renumbered.
+Definition of "done": what `.github/workflows/ci.yml` runs (`fmt --check`, `clippy --workspace
+--all-targets --locked -D warnings`, `test --workspace --locked`, with the CLI sidecar staged).
 
 ## Commands
 
@@ -104,10 +115,16 @@ crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()
   `rust_engine.rs` (`RustEngine`) — the only engine. There used to be an optional Ghostscript engine
   (and a "best of both" mode); it was removed because, on real documents, it never beat the Rust
   engine at equal quality, rotated some pages (`AutoRotatePages`), and required an external AGPL
-  binary. The app is fully stand-alone. `RustEngine`: `lopdf::Document::load` → `prune_objects` →
+  binary. The app is fully stand-alone. `RustEngine`: `lopdf::Document::load` →
+    `stream_recovery::recover_missing_lengths` (lopdf ≤ 0.47 loads a stream whose dictionary has no
+    `/Length` as *empty*, silently — 4-Heights writes form fonts that way; we read it back from the
+    input up to the only `endstream`+`endobj`, D-026) → `prune_objects` → a referenced stream still
+    lost fails with `UnreadableStream` →
     `dedup_streams` (hashes stream bytes, merges byte-identical streams via `doc.traverse_objects`
     reference rewriting, then re-prunes) → `image_ops::resample_images` (skipped entirely for
-    Lossless) → `doc.compress()` (Flate any uncompressed stream) → `doc.save_modern()` (xref +
+    Lossless) → `drop_orphan_decode_parms` (a `/DecodeParms` on an unfiltered stream would survive
+    the next step and apply a predictor to raw samples — jsPDF soft masks) → `doc.compress()`
+    (Flate any uncompressed stream) → `doc.save_modern()` (xref +
     object streams) → reload and verify the page count didn't change (else the output is discarded
     and `PageCountMismatch` is returned).
 - `placement.rs`: figures out each image XObject's *effective DPI* by walking page (and nested Form
@@ -166,7 +183,10 @@ crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()
   Zopfli only at `extreme`/`extreme-max`. Passes: `deep_dedup.rs` (merge objects equal once *decoded*, dictionary minus
   encoding keys, iterated to a fixpoint — two images become equal once their SMasks merged);
   `font_merge.rs` (union the per-page subsets of one `CIDFontType2`/Identity TrueType font —
-  subsetters keep original GIDs — into one program, only when glyph data/hinting agree);
+  subsetters keep original GIDs — into one program, only when glyph data/hinting agree; not all do:
+  4-Heights and Quartz `AAAAAx+` subsets renumber, so an empty glyph (space) only agrees with a
+  drawn one if the advances say so and, for simple fonts, the other `cmap` sends the same code to
+  it — D-009 revision);
   `type1_merge.rs` (same for Type 1 `/FontFile` subsets — LaTeX figures each carry their own CMR10…:
   eexec-decrypt, union glyphs by name and `Subrs` by index, `return`-stub Subrs count as absent,
   compare decrypted charstrings, re-encrypt); `type1_cff.rs` (then converts every Type 1 program to

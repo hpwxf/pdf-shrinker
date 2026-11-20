@@ -24,6 +24,7 @@ mod level;
 mod par;
 mod placement;
 mod rust_engine;
+mod stream_recovery;
 mod type1_cff;
 mod type1_merge;
 mod version;

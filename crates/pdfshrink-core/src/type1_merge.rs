@@ -116,7 +116,8 @@ pub fn merge_type1_subsets(doc: &mut Document) -> usize {
 }
 
 fn base_name(n: &[u8]) -> Vec<u8> {
-    if n.len() > 7 && n[6] == b'+' && n[..6].iter().all(u8::is_ascii_uppercase) {
+    // A bare subset prefix ("AAAAAA+") names no font: empty, never grouped.
+    if n.len() >= 7 && n[6] == b'+' && n[..6].iter().all(u8::is_ascii_uppercase) {
         n[7..].to_vec()
     } else {
         n.to_vec()

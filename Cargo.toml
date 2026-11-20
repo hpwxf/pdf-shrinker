@@ -10,13 +10,13 @@ members = [
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 authors = ["Pascal Havé <contact@haveneer.com>"]
 
 [workspace.dependencies]
 # Default features (chrono clock, rayon) are opted into by pdfshrink-core's
 # `native` feature only: the WebAssembly build has neither threads nor a clock.
-lopdf = { version = "0.45", default-features = false }
+lopdf = { version = "0.47", default-features = false }
 # No codec: JPEG goes through jpeg.rs (tests and examples enable `jpeg` to write fixtures).
 image = { version = "0.25", default-features = false }
 mozjpeg = "0.10"
