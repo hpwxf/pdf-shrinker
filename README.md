@@ -83,6 +83,7 @@ On first launch, the **"Install the Finder service and command-line tool"** butt
 pdfshrink file.pdf                          # default level (configurable)
 pdfshrink -l high file.pdf                   # explicit level
 pdfshrink -l medium *.pdf                    # multiple files, in parallel
+pdfshrink --flatten form.pdf                 # also flatten annotations (see below)
 pdfshrink config get level                   # read a persisted default
 pdfshrink config set level low               # change a persisted default
 ```
@@ -90,6 +91,12 @@ pdfshrink config set level low               # change a persisted default
 Levels (`-l`), each building on the previous: `lossless`, `low`, `medium` (default), `high`,
 `extreme`, `extreme-max`. `pdfshrink --help` sums each one up in a line; details in
 [`docs/compression-strategies.md`](docs/compression-strategies.md).
+
+`--flatten` (a **"Flatten annotations"** checkbox in the app and on the web page) draws
+annotations into the page: text boxes, drawings, stamps, signatures, highlights and filled form
+fields (from macOS Preview, for instance) can then no longer be moved or edited. Text stays
+selectable: nothing is turned into an image. Links and sticky notes are kept. A flattened file is
+written even if it isn't smaller.
 
 Everything is done by a built-in Rust engine: no external tool (Ghostscript or otherwise) is needed.
 
@@ -147,6 +154,10 @@ master (.github/workflows/pages.yml). One-time setup: Settings › Pages › Sou
 See [`CLAUDE.md`](CLAUDE.md) for the detailed architecture (compression engine, effective-DPI
 calculation for images, Tauri app structure, etc.), development commands (`cargo test`,
 `cargo tauri dev`, generating a test PDF…) and the current state of verification.
+
+## Changes
+
+See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
