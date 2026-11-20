@@ -28,6 +28,9 @@ the options set aside and what would change our minds; `journal/README.md` has t
 index and the questions still waiting for an entry. Read the relevant entry before revisiting a
 choice. A new architectural decision gets its entry **before or with** the code, as the first file
 of the commit; a decision that drifts is revised in place (dated section), never renumbered.
+`CHANGELOG.md` (Keep a Changelog) lists user-visible changes: add them under `[Unreleased]` with
+the change; a release moves them under its version, bumped in `Cargo.toml` (workspace),
+`app/src-tauri/Cargo.toml` and `app/src-tauri/tauri.conf.json`.
 Definition of "done": what `.github/workflows/ci.yml` runs (`fmt --check`, `clippy --workspace
 --all-targets --locked -D warnings`, `test --workspace --locked`, with the CLI sidecar staged).
 

@@ -2881,7 +2881,7 @@ dependencies = [
 
 [[package]]
 name = "pdfshrink-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "pdfshrink-core",
@@ -2890,7 +2890,7 @@ dependencies = [
 
 [[package]]
 name = "pdfshrink-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "directories",
  "fax",
@@ -2911,7 +2911,7 @@ dependencies = [
 
 [[package]]
 name = "pdfshrink-wasm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lopdf",
  "pdfshrink-core",
@@ -2920,7 +2920,7 @@ dependencies = [
 
 [[package]]
 name = "pdfshrinker-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pdfshrink-core",
  "rayon",
