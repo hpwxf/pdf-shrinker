@@ -18,7 +18,7 @@ env:
 jobs:
   check:
     name: fmt, clippy, test
-    runs-on: macos-14 # arm64 (Apple Silicon) runner
+    runs-on: macos-15 # arm64 (Apple Silicon) runner
     steps:
       - uses: actions/checkout@v4
 

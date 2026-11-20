@@ -5,7 +5,7 @@
 | **Identifier** | D-022 |
 | **Date** | 2026-11-20 (retrospective; decisions taken on 2026-09-30 and 2026-10-05) |
 | **Author** | Pascal Havé |
-| **Status** | adopted (retrospective) |
+| **Status** | adopted (retrospective), revised |
 | **Commits** | `e94f476` (first `cargo fmt --all`), `7651a19` (`ci.yml`), `9bfb9fb` (bundle moved out), `103a115` (`pages.yml`) |
 
 ## 1. Context
@@ -57,3 +57,13 @@ toolchain is `dtolnay/rust-toolchain@stable`, not pinned; edition 2024. Default 
   `cargo check -p pdfshrink-wasm --target wasm32-unknown-unknown` job on push would catch a
   `native`-only call leaking into shared code (D-018).
 * The Windows build is not checked on push either (D-016).
+
+## Revision (2026-11-20): `macos-14` retired, runners move to `macos-15`
+
+The first CI run in seven weeks (on the D-026 branch) was cancelled before any step: GitHub no
+longer serves `macos-14` ("The configuration 'macos-14-arm64-us-default' is not supported").
+`ci.yml` and `macos.yml` now run on `macos-15`, still arm64; nothing else changes. A versioned
+image is kept rather than `macos-latest`, so that an image (Xcode, SDK) change shows up as a
+commit instead of happening under an unchanged workflow; the price is this kind of breakage when
+GitHub retires one.
+

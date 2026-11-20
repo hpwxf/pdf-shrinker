@@ -92,7 +92,7 @@ never reassigned.
 | [D-019](D-019-jpeg-codecs.md) | JPEG: mozjpeg natively, pure-Rust `jpeg-encoder` otherwise; every JPEG decoded by `jpeg-decoder`, never zune-jpeg | adopted (retrospective) |
 | [D-020](D-020-image-fidelity-at-144-dpi.md) | image fidelity reported as luma SSIM judged at 144 dpi on the page, area-weighted; always on in the app | adopted (retrospective) |
 | [D-021](D-021-test-strategy.md) | tests: fixtures synthesized in-test, generated test PDFs, a private real-document corpus and render comparisons outside the repository | adopted (retrospective) |
-| [D-022](D-022-ci-and-lint-policy.md) | CI: macOS arm64, `fmt --check`, `clippy -D warnings`, `test`, all `--locked`; builds and deploys manual-only; stable toolchain, not pinned | adopted (retrospective) |
+| [D-022](D-022-ci-and-lint-policy.md) | CI: macOS arm64, `fmt --check`, `clippy -D warnings`, `test`, all `--locked`; builds and deploys manual-only; stable toolchain, not pinned | adopted (retrospective), revised |
 | [D-023](D-023-build-identifier-in-core.md) | build identifier (commit + dirty flag) baked into `pdfshrink-core`, read by every front end through `build_info()` | adopted (retrospective) |
 | [D-024](D-024-ui-languages.md) | app and web in English and French (`i18n.js`, shared); CLI in English only | adopted (retrospective) |
 | [D-025](D-025-license.md) | license MIT at first, never written down; now `MIT OR Apache-2.0`, with `LICENSE-MIT` and `LICENSE-APACHE` | adopted (retrospective), revised |
