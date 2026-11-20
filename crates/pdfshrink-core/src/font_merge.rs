@@ -1129,7 +1129,7 @@ mod tests {
 
     #[test]
     fn a_space_is_not_merged_with_another_subsets_glyph() {
-        // Subsets that renumber their GIDs (4-Heights form fields): GID 1 is a
+        // Subsets that renumber their GIDs (Preview annotations): GID 1 is a
         // space (no outline, advance 278) in one, an `X` in the other. Treating
         // the empty glyph as an emptied slot would draw an X for every space.
         let a = Sfnt::parse(&fake_subset(4, &[0, 1, 2])).unwrap();

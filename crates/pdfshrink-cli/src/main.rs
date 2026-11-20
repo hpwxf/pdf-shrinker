@@ -38,6 +38,13 @@ struct Cli {
     #[arg(long, value_name = "SUFFIX", default_value = "compressed")]
     suffix: String,
 
+    /// Flatten annotations: draw markup annotations (text boxes, ink, stamps,
+    /// highlights…) and filled form fields into the page, so they can no
+    /// longer be moved or edited; text stays selectable. Links and sticky
+    /// notes are kept. The output is written even when it isn't smaller.
+    #[arg(long)]
+    flatten: bool,
+
     /// Number of files to compress in parallel (defaults to the number of CPUs).
     #[arg(short = 'j', long, value_name = "N")]
     jobs: Option<usize>,
@@ -174,6 +181,9 @@ fn run_compress(cli: Cli) -> ExitCode {
             return ExitCode::from(1);
         }
     }
+    if cli.flatten {
+        profile.flatten_annotations = true;
+    }
 
     if let Some(jobs) = cli.jobs {
         let _ = rayon::ThreadPoolBuilder::new()
@@ -203,20 +213,22 @@ fn run_compress(cli: Cli) -> ExitCode {
                         )
                     })
                     .unwrap_or_default();
+                let flattened = match report.annotations_flattened {
+                    0 => String::new(),
+                    1 => "  1 annotation flattened".to_string(),
+                    n => format!("  {n} annotations flattened"),
+                };
+                // Positive only with --flatten (written even when not smaller).
+                let change = -report.ratio() * 100.0;
                 println!(
-                    "{}  ->  {}   {} -> {}  (-{:.0}%){fidelity}",
+                    "{}  ->  {}   {} -> {}  ({change:+.0}%){fidelity}{flattened}",
                     file.display(),
                     output.display(),
                     human_size(report.input_size),
                     human_size(report.output_size),
-                    report.ratio() * 100.0,
                 );
                 if cli.notify {
-                    notify(&format!(
-                        "{}: -{:.0} %",
-                        file_name(output),
-                        report.ratio() * 100.0
-                    ));
+                    notify(&format!("{}: {change:+.0} %", file_name(output)));
                 }
             }
             Ok(Outcome::NotSmaller) => {

@@ -59,7 +59,8 @@ pub fn compress_file_with(input: &Path, profile: &Profile, suffix: &str) -> Resu
 
     let report = RustEngine.compress(input, &tmp_path, profile)?;
 
-    if report.output_size >= report.input_size {
+    // Flattening was asked for: its result is wanted even when not smaller.
+    if report.output_size >= report.input_size && !profile.flatten_annotations {
         let _ = fs::remove_file(&tmp_path);
         return Ok(Outcome::NotSmaller);
     }

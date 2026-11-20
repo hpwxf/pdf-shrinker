@@ -9,6 +9,7 @@ const levelSelect = document.getElementById("level-select");
 const levelHint = document.getElementById("level-hint");
 const jpegWarning = document.getElementById("jpeg-warning");
 const compareAllCheckbox = document.getElementById("compare-all");
+const flattenCheckbox = document.getElementById("flatten");
 const compressBtn = document.getElementById("compress-btn");
 const clearBtn = document.getElementById("clear-btn");
 const pickFilesBtn = document.getElementById("pick-files");
@@ -31,6 +32,20 @@ try {
 } catch {
   // localStorage can throw (blocked site data): keep the default.
 }
+// So is "Flatten annotations".
+const FLATTEN_KEY = "pdfshrinker.flatten";
+try {
+  flattenCheckbox.checked = localStorage.getItem(FLATTEN_KEY) === "1";
+} catch {
+  // Default off.
+}
+flattenCheckbox.addEventListener("change", () => {
+  try {
+    localStorage.setItem(FLATTEN_KEY, flattenCheckbox.checked ? "1" : "0");
+  } catch {
+    // Best effort only.
+  }
+});
 
 /** id -> entry: { file, li, row, statusBtn, detail, download, remove, levelList, state, compare, levels, results } */
 const files = new Map();
@@ -106,8 +121,11 @@ function fidelityText(f) {
   ];
 }
 
+/** "332.3 KB → 56.0 KB · −83 %" ("+2 %": flattened, kept even when not smaller) */
 function sizeText(s) {
-  return `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)} · −${s.pct} %`;
+  const change = s.pct >= 0 ? `−${s.pct}` : `+${-s.pct}`;
+  const flattened = s.flattened > 0 ? ` · ${t("file.flattened", { n: s.flattened })}` : "";
+  return `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)} · ${change} %${flattened}`;
 }
 
 /** "report.pdf" at "high" -> "report-high.pdf" (compare mode) or "report-compressed.pdf". */
@@ -310,7 +328,7 @@ function recordResult(entry, msg) {
   let state;
   if (msg.type === "error") {
     state = { kind: "error", message: msg.crashed ? t("web.crashed") : msg.message };
-  } else if (msg.outputSize >= msg.inputSize) {
+  } else if (msg.outputSize >= msg.inputSize && !msg.flattened) {
     state = { kind: "not_smaller" };
   } else {
     const blob = new Blob([msg.output], { type: "application/pdf" });
@@ -320,6 +338,7 @@ function recordResult(entry, msg) {
       outputSize: msg.outputSize,
       pct: msg.inputSize > 0 ? Math.round((1 - msg.outputSize / msg.inputSize) * 100) : 0,
       fidelity: msg.fidelity,
+      flattened: msg.flattened,
       url: URL.createObjectURL(blob),
       downloadName: outputName(entry.file.name, msg.level, entry.compare),
     };
@@ -348,7 +367,10 @@ async function pump() {
     onWorkerMessage({ type: "error", id: job.id, level: job.level, message: String(e) });
     return;
   }
-  worker.postMessage({ id: job.id, level: job.level, name: entry.file.name, bytes }, [bytes]);
+  worker.postMessage(
+    { id: job.id, level: job.level, flatten: job.flatten, name: entry.file.name, bytes },
+    [bytes]
+  );
 }
 
 // --- Actions -----------------------------------------------------------------
@@ -372,7 +394,7 @@ function run(ids) {
     entry.levels = levels;
     entry.results = Object.fromEntries(levels.map((l) => [l, { kind: "queued" }]));
     setState(entry, { kind: "queued" });
-    for (const level of levels) queue.push({ id, level });
+    for (const level of levels) queue.push({ id, level, flatten: flattenCheckbox.checked });
   }
   pump();
 }

@@ -6,21 +6,25 @@ const levelHint = document.getElementById("level-hint");
 const setDefaultCheckbox = document.getElementById("set-default");
 const compareAllCheckbox = document.getElementById("compare-all");
 const parallelCheckbox = document.getElementById("parallel");
+const flattenCheckbox = document.getElementById("flatten");
 
-// "Run in parallel" is remembered per viewer, like the language.
-const PARALLEL_KEY = "pdfshrinker.parallel";
-try {
-  parallelCheckbox.checked = localStorage.getItem(PARALLEL_KEY) === "1";
-} catch {
-  // localStorage can throw (blocked site data): default off.
-}
-parallelCheckbox.addEventListener("change", () => {
+// "Run in parallel" and "Flatten annotations" are remembered per viewer, like the language.
+function remember(checkbox, key) {
   try {
-    localStorage.setItem(PARALLEL_KEY, parallelCheckbox.checked ? "1" : "0");
+    checkbox.checked = localStorage.getItem(key) === "1";
   } catch {
-    // Best effort only.
+    // localStorage can throw (blocked site data): default off.
   }
-});
+  checkbox.addEventListener("change", () => {
+    try {
+      localStorage.setItem(key, checkbox.checked ? "1" : "0");
+    } catch {
+      // Best effort only.
+    }
+  });
+}
+remember(parallelCheckbox, "pdfshrinker.parallel");
+remember(flattenCheckbox, "pdfshrinker.flatten");
 const compressBtn = document.getElementById("compress-btn");
 const clearBtn = document.getElementById("clear-btn");
 const pickFilesBtn = document.getElementById("pick-files");
@@ -160,9 +164,11 @@ function fidelityText(f) {
   ];
 }
 
-/** "332.3 KB → 56.0 KB · −83 %" */
+/** "332.3 KB → 56.0 KB · −83 %" ("+2 %": flattened, written even when not smaller) */
 function sizeText(s) {
-  return `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)} · −${s.pct} %`;
+  const change = s.pct >= 0 ? `−${s.pct}` : `+${-s.pct}`;
+  const flattened = s.flattened > 0 ? ` · ${t("file.flattened", { n: s.flattened })}` : "";
+  return `${humanSize(s.inputSize)} → ${humanSize(s.outputSize)} · ${change} %${flattened}`;
 }
 
 /** Turns a `compress-result` payload into a row/level state. */
@@ -176,6 +182,7 @@ function resultState(r) {
       pct,
       output: r.output,
       fidelity: r.fidelity,
+      flattened: r.annotations_flattened,
     };
   }
   if (r.status === "not_smaller") return { kind: "not_smaller" };
@@ -285,7 +292,12 @@ async function run(paths) {
     setState(entry, { kind: "queued" });
   }
   try {
-    await core.invoke("compress_files", { paths, levels, parallel: parallelCheckbox.checked });
+    await core.invoke("compress_files", {
+      paths,
+      levels,
+      parallel: parallelCheckbox.checked,
+      flatten: flattenCheckbox.checked,
+    });
   } catch (e) {
     for (const p of paths) {
       const entry = files.get(p);

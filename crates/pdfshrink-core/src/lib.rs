@@ -14,6 +14,7 @@ mod config;
 mod deep_dedup;
 mod engine;
 mod error;
+mod flatten;
 mod font_merge;
 mod image_codecs;
 mod image_ops;

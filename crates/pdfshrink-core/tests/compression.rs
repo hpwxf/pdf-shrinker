@@ -12,6 +12,7 @@ use tempfile::tempdir;
 
 use pdfshrink_core::{
     CompressOptions, Engine, Level, Outcome, PdfShrinkError, RustEngine, compress_file,
+    compress_file_with,
 };
 
 fn make_jpeg_bytes(w: u32, h: u32, quality: u8) -> Vec<u8> {
@@ -1168,8 +1169,8 @@ fn matte_keeps_the_parent_color_space() {
 
 /// A text-only PDF whose font has an embedded `/FontFile2` holding `program`,
 /// saved uncompressed, then with that stream's `/Length` blanked out (spaces of
-/// the same length, so the cross-reference offsets stay right) — as 4-Heights
-/// PDF Library writes form-field fonts. `break_end` also damages the
+/// the same length, so the cross-reference offsets stay right) — as macOS
+/// Preview (PDFKit) writes the fonts of its annotations. `break_end` also damages the
 /// `endstream` keyword, so the stream's end cannot be found either.
 fn pdf_with_font_lacking_length(program: &[u8], break_end: bool) -> Vec<u8> {
     let mut doc = build_text_only_pdf();
@@ -1309,4 +1310,95 @@ fn decode_parms_of_an_uncompressed_stream_do_not_reach_its_new_filter() {
         "no predictor applied to raw samples"
     );
     assert_eq!(mask.decompressed_content().unwrap(), samples);
+}
+
+/// A text page plus a macOS Preview-style `/FreeText` annotation (appearance
+/// stream with real text) and a link.
+fn build_annotated_pdf() -> Document {
+    let mut doc = build_text_only_pdf();
+    let page_id = doc.page_iter().next().unwrap();
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+    let appearance = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Form",
+            "BBox" => vec![Object::Integer(0), Object::Integer(0), Object::Integer(120), Object::Integer(14)],
+            "Resources" => dictionary! { "Font" => dictionary! { "TT1" => Object::Reference(font_id) } },
+        },
+        b"BT /TT1 10 Tf 2 3 Td (46 rue Stanislas Girardin) Tj ET".to_vec(),
+    ));
+    let free_text = doc.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "FreeText",
+        "Rect" => vec![Object::Real(300.0), Object::Real(700.0), Object::Real(420.0), Object::Real(714.0)],
+        "Contents" => Object::string_literal("46 rue Stanislas Girardin"),
+        "AP" => dictionary! { "N" => Object::Reference(appearance) },
+        "F" => 4,
+    });
+    let link = doc.add_object(dictionary! {
+        "Type" => "Annot",
+        "Subtype" => "Link",
+        "Rect" => vec![Object::Real(0.0), Object::Real(0.0), Object::Real(10.0), Object::Real(10.0)],
+    });
+    let page = doc.get_dictionary_mut(page_id).unwrap();
+    page.set(
+        "Annots",
+        vec![Object::Reference(free_text), Object::Reference(link)],
+    );
+    doc
+}
+
+#[test]
+fn flatten_draws_annotations_into_the_page_and_writes_even_when_not_smaller() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("form.pdf");
+    let mut doc = build_annotated_pdf();
+    // As compact as lopdf writes it: flattening adds two small content streams.
+    doc.compress();
+    let mut bytes = Vec::new();
+    doc.save_modern(&mut bytes).unwrap();
+    std::fs::write(&input, &bytes).unwrap();
+
+    let mut profile = Level::Lossless.profile();
+    profile.flatten_annotations = true;
+    let Outcome::Compressed { output, report } =
+        compress_file_with(&input, &profile, "flat").unwrap()
+    else {
+        panic!("flattening must write its output");
+    };
+    assert_eq!(report.annotations_flattened, 1);
+
+    let out = Document::load(&output).unwrap();
+    let page_id = out.page_iter().next().unwrap();
+    let page = out.get_dictionary(page_id).unwrap();
+    let annots = page.get(b"Annots").unwrap().as_array().unwrap();
+    assert_eq!(annots.len(), 1, "only the link is left");
+    let link_dict = out
+        .get_dictionary(annots[0].as_reference().unwrap())
+        .unwrap();
+    assert_eq!(
+        link_dict.get(b"Subtype").unwrap().as_name().unwrap(),
+        b"Link"
+    );
+
+    let content = String::from_utf8(out.get_page_content(page_id)).unwrap();
+    assert!(content.contains("Hello, PdfShrinker!"), "{content}");
+    assert!(
+        content.contains("q 1 0 0 1 300 700 cm /Flat1 Do Q"),
+        "{content}"
+    );
+    // The appearance still draws its text as text.
+    let resources = page.get(b"Resources").unwrap().as_dict().unwrap();
+    let xobjects = resources.get(b"XObject").unwrap().as_dict().unwrap();
+    let form = out
+        .get_object(xobjects.get(b"Flat1").unwrap().as_reference().unwrap())
+        .unwrap()
+        .as_stream()
+        .unwrap();
+    let body = String::from_utf8(form.decompressed_content().unwrap()).unwrap();
+    assert!(body.contains("(46 rue Stanislas Girardin) Tj"), "{body}");
 }

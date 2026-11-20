@@ -53,6 +53,9 @@ cargo run -p pdfshrink-core --example make_fixture -- /path/to/out.pdf
 # into ./test-pdfs (gitignored); dev-only tools: imagemagick, openjpeg, img2pdf, qpdf, Pillow.
 # See TODO.md for the results on these files.
 scripts/make-test-pdfs.sh
+# Annotated PDFs (every PDFKit annotation kind, form fields, rotated page, multi-page) for
+# `--flatten`, into ./test-pdfs; macOS only (swift + PDFKit, the framework behind Preview)
+scripts/make-annotated-pdfs.sh
 
 # Diagnose a disappointing compression ratio: list every image XObject (id, size, filter,
 # colorspace) and how many exceed 2000px on a side — run on input vs. output to see what
@@ -117,8 +120,9 @@ crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()
   engine at equal quality, rotated some pages (`AutoRotatePages`), and required an external AGPL
   binary. The app is fully stand-alone. `RustEngine`: `lopdf::Document::load` →
     `stream_recovery::recover_missing_lengths` (lopdf ≤ 0.47 loads a stream whose dictionary has no
-    `/Length` as *empty*, silently — 4-Heights writes form fonts that way; we read it back from the
-    input up to the only `endstream`+`endobj`, D-026) → `prune_objects` → a referenced stream still
+    `/Length` as *empty*, silently — macOS Preview/PDFKit writes annotation fonts that way; we read it back from the
+    input up to the only `endstream`+`endobj`, D-026) → with `Profile::flatten_annotations`,
+    `flatten::flatten_annotations` (D-027) → `prune_objects` → a referenced stream still
     lost fails with `UnreadableStream` →
     `dedup_streams` (hashes stream bytes, merges byte-identical streams via `doc.traverse_objects`
     reference rewriting, then re-prunes) → `image_ops::resample_images` (skipped entirely for
@@ -184,7 +188,7 @@ crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()
   encoding keys, iterated to a fixpoint — two images become equal once their SMasks merged);
   `font_merge.rs` (union the per-page subsets of one `CIDFontType2`/Identity TrueType font —
   subsetters keep original GIDs — into one program, only when glyph data/hinting agree; not all do:
-  4-Heights and Quartz `AAAAAx+` subsets renumber, so an empty glyph (space) only agrees with a
+  Quartz `AAAAAx+` subsets (Preview annotations) renumber, so an empty glyph (space) only agrees with a
   drawn one if the advances say so and, for simple fonts, the other `cmap` sends the same code to
   it — D-009 revision);
   `type1_merge.rs` (same for Type 1 `/FontFile` subsets — LaTeX figures each carry their own CMR10…:
@@ -206,6 +210,17 @@ crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()
   opaque SMasks dropped, SMasks PNG-predicted, and cropping images to the part inside the page
   (`placement.rs`'s `visible`) via a Form XObject wrapper that takes over the image's id — only when
   the walk was `complete` and every reference to the image came from a walked `/XObject` dict.
+- `flatten.rs` (opt-in, never turned on by a level — D-027): draws the `/AP /N` appearance (its `/AS`
+  state for widgets) of every markup annotation (`FreeText`, `Ink`, `Stamp`, shapes, text markup,
+  `Caret`) and form widget into its page with `q cm /FlatN Do Q`, mapping the form's
+  `/Matrix`-transformed `/BBox` onto `/Rect` (ISO 32000 §12.5.5), the original content wrapped in
+  `q … Q`; then deletes the annotation (and its `Popup`), removes flattened widgets from `/AcroForm`
+  (dropped once empty). Text stays text: nothing is rasterized. Kept: `Link`, `Text` notes, attachments,
+  multimedia, `Redact`, anything without a usable appearance, with `/OC`, or widgets under
+  `/NeedAppearances`. Hidden/`NoView` ones are removed without drawing. The page gets its own direct
+  `/Resources` (no other page sees the new names). With it, `compress_file_with` writes the output even
+  when not smaller. CLI `--flatten` (or `--tune flatten=1`), app and web "Flatten annotations"
+  checkboxes (remembered in localStorage); the Finder service never flattens.
 - `config.rs`: `Config` (default level) persisted at
   `~/Library/Application Support/com.haveneer.pdfshrinker/config.toml`. This is the single source of
   truth the CLI, the app and the Finder service all read — the app's "set as default" checkbox writing
@@ -220,7 +235,7 @@ crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()
 
 ### `crates/pdfshrink-cli`
 
-`clap` derive; `pdfshrink [-l LEVEL] [--tune K=V] [--suffix S] [-j N] [--notify] FILES...` plus `config get/set` and
+`clap` derive; `pdfshrink [-l LEVEL] [--flatten] [--tune K=V] [--suffix S] [-j N] [--notify] FILES...` plus `config get/set` and
 `install --finder-service --cli-link` subcommands (`--quick-action` kept as an alias). Files are compressed in parallel with `rayon`. Exit
 codes: `0` success, `1` any error, `2` any file was already optimal (checked after all files, so a
 mix of outcomes still surfaces the most severe code). `--notify` shells out to `osascript` — used by

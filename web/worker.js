@@ -25,11 +25,11 @@ const ready = init().then(() => {
 });
 ready.catch((e) => postMessage({ type: "failed", message: String(e) }));
 
-self.onmessage = async ({ data: { id, level, name, bytes } }) => {
+self.onmessage = async ({ data: { id, level, flatten, name, bytes } }) => {
   await ready;
   let result;
   try {
-    result = compress(new Uint8Array(bytes), level, name);
+    result = compress(new Uint8Array(bytes), level, name, flatten);
   } catch (e) {
     postMessage({
       type: "error",
@@ -52,6 +52,8 @@ self.onmessage = async ({ data: { id, level, name, bytes } }) => {
     output: output.buffer,
     inputSize: result.inputSize,
     outputSize: result.outputSize,
+    // Flattened files are kept even when not smaller.
+    flattened: result.annotationsFlattened,
     fidelity,
   };
   result.free();
