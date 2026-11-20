@@ -18,6 +18,7 @@ pub struct Compressed {
     output: Vec<u8>,
     input_size: u64,
     images_resampled: usize,
+    annotations_flattened: usize,
     fidelity: Option<ImageFidelity>,
 }
 
@@ -44,6 +45,12 @@ impl Compressed {
         self.images_resampled
     }
 
+    /// Annotations drawn into their page (`flatten`).
+    #[wasm_bindgen(getter, js_name = annotationsFlattened)]
+    pub fn annotations_flattened(&self) -> usize {
+        self.annotations_flattened
+    }
+
     /// Mean image fidelity (luma SSIM), when images were re-encoded.
     #[wasm_bindgen(getter, js_name = fidelityMean)]
     pub fn fidelity_mean(&self) -> Option<f32> {
@@ -66,18 +73,26 @@ fn parse_level(level: &str) -> Result<Level, JsError> {
 }
 
 /// Compresses `input` (a whole PDF) at `level` (`lossless` … `extreme-max`).
-/// `name` only labels error messages. The result may be no smaller than the
-/// input: the caller checks `outputSize`.
+/// `name` only labels error messages. `flatten` draws markup annotations and
+/// form fields into their page (D-027). The result may be no smaller than the
+/// input: the caller checks `outputSize` (and keeps a flattened file anyway).
 #[wasm_bindgen]
-pub fn compress(input: &[u8], level: &str, name: &str) -> Result<Compressed, JsError> {
+pub fn compress(
+    input: &[u8],
+    level: &str,
+    name: &str,
+    flatten: bool,
+) -> Result<Compressed, JsError> {
     let mut profile = parse_level(level)?.profile();
     profile.measure_fidelity = true;
+    profile.flatten_annotations = flatten;
     let (output, report) = pdfshrink_core::compress_bytes(input, Path::new(name), &profile)
         .map_err(|e| JsError::new(&e.to_string()))?;
     Ok(Compressed {
         output,
         input_size: report.input_size,
         images_resampled: report.images_resampled,
+        annotations_flattened: report.annotations_flattened,
         fidelity: report.image_fidelity,
     })
 }

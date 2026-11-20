@@ -13,6 +13,9 @@ pub struct Report {
     /// How faithful the re-encoded images are, when the profile asked
     /// (`Profile::measure_fidelity`) and at least one image was re-encoded.
     pub image_fidelity: Option<ImageFidelity>,
+    /// Annotations drawn into their page and removed
+    /// (`Profile::flatten_annotations`).
+    pub annotations_flattened: usize,
 }
 
 /// Luma SSIM of each re-encoded image against its source, at the source's

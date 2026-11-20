@@ -100,3 +100,22 @@ off. Both come from lopdf too, and both existed before:
   16,342 pixels at 40 dpi). lopdf's `main` keeps reals as `f64` (#674, a breaking change, not
   released yet): taken with the next release, nothing to do in the core.
 
+
+## Revision (2026-11-20): the streams come from macOS Preview, not 4-Heights
+
+§1 blames 4-Heights PDF Library for the `/FontFile2` streams without `/Length`. Working on D-027
+showed the attribution is wrong. The file was produced by 4-Heights, then filled in macOS Preview,
+which kept the original `/Producer`. The 32 streams without `/Length` are the font programs of
+Preview's 32 `/FreeText` annotations (`AAAAAA+` TrueType subsets under each annotation's
+appearance stream, e.g. object 232 under the font 230 of the first annotation). They are not the
+page's own fonts (`ATMAFV+ArialMT`, `AAAAAB+AllAndNone`), which have a `/Length`. Generating
+annotated files with PDFKit, the framework behind Preview (`scripts/make-annotated-pdfs.sh`,
+macOS 27.2.1, `/Producer` "Quartz PDFContext"), reproduces it: every `/FontFile2` written for an
+annotation appearance has only `/Length1`.
+
+The decision does not change. The case is more common than "one PDF library": any PDF annotated or
+filled in Preview or another PDFKit-based app on a recent macOS. That makes the recovery more
+important, and the upstream lopdf fix too. The same misattribution in D-009's revision, in a
+`font_merge.rs` test comment, in `tests/compression.rs`, `CLAUDE.md` and
+`docs/compression-strategies.md` is corrected in the same commit: the subsets that renumber their
+GIDs there are Quartz's.

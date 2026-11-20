@@ -119,3 +119,10 @@ Still open: CID TrueType subsets that renumber their GIDs, at a fixed pitch, wit
 another subset draws, would still merge wrongly — no `cmap` to tell, and the `/W` widths agree. None
 in the corpus.
 
+
+## Note (2026-11-20): "4-Heights form fonts" were Preview's
+
+The revision above names 4-Heights. The fonts in question are the `AAAAAA+` TrueType subsets that
+macOS Preview (Quartz) writes for its `/FreeText` annotations, in a file first produced by
+4-Heights (D-026, revision of the same date). The decision does not change. The only renumbering
+subsetter identified so far is Quartz.

@@ -10,7 +10,8 @@ use crate::image_ops;
 use crate::level::Profile;
 use crate::{PdfShrinkError, Result};
 use crate::{
-    cff_subset, deep_dedup, font_merge, stream_recovery, type1_cff, type1_merge, zopfli_pass,
+    cff_subset, deep_dedup, flatten, font_merge, stream_recovery, type1_cff, type1_merge,
+    zopfli_pass,
 };
 
 /// Pure-Rust compression engine: structural cleanup (dead-object pruning, stream
@@ -48,6 +49,19 @@ pub fn compress_bytes(input: &[u8], name: &Path, profile: &Profile) -> Result<(V
 
     let original_pages = doc.get_pages().len();
     let mut phase = PhaseLog::new();
+
+    // First, so the annotation dictionaries are pruned and their appearance
+    // fonts and images go through every pass below as page content.
+    let annotations_flattened = if profile.flatten_annotations {
+        let stats = flatten::flatten_annotations(&mut doc);
+        phase.done(&format!(
+            "flatten ({} annotations flattened, {} kept)",
+            stats.flattened, stats.kept
+        ));
+        stats.flattened
+    } else {
+        0
+    };
 
     doc.prune_objects();
     // Checked once unreferenced objects are gone: only a stream the output keeps matters.
@@ -127,6 +141,7 @@ pub fn compress_bytes(input: &[u8], name: &Path, profile: &Profile) -> Result<(V
         images_resampled,
         images_skipped,
         image_fidelity,
+        annotations_flattened,
     };
     Ok((output, report))
 }

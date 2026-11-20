@@ -125,8 +125,8 @@ formats are handled (every level):
 
 A merge only happens when the subsets agree: same font name, identical fixed parts (header,
 hinting programs or `/Private` dictionary), identical glyph data wherever two subsets define the
-same glyph, and no conflicting built-in encoding. Some subsetters (4-Heights, Quartz's `AAAAAx+`)
-renumber glyphs in order of use, so an empty glyph — a space — is not taken as an emptied slot
+same glyph, and no conflicting built-in encoding. Some subsetters (Quartz's `AAAAAx+`, e.g.
+Preview annotations) renumber glyphs in order of use, so an empty glyph — a space — is not taken as an emptied slot
 unless its advance and, for simple TrueType fonts, the other subset's `cmap` (same code, same
 glyph) agree (journal D-009, revision of 2026-11-20). Text renders **pixel-identical**: on the LaTeX
 thesis below, all 213 pages rendered at 72 dpi are the same with and without merging.

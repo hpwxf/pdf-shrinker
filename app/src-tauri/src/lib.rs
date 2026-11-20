@@ -46,6 +46,8 @@ struct CompressResult {
     output_size: Option<u64>,
     /// Re-encoded images' similarity to the originals (none re-encoded: `None`).
     fidelity: Option<FidelityDto>,
+    /// Annotations drawn into their page (with "Flatten annotations").
+    annotations_flattened: usize,
     message: Option<String>,
 }
 
@@ -102,6 +104,7 @@ async fn compress_files(
     paths: Vec<String>,
     levels: Vec<String>,
     parallel: bool,
+    flatten: bool,
 ) -> Result<(), String> {
     let levels = levels
         .iter()
@@ -126,7 +129,7 @@ async fn compress_files(
             } else {
                 "compressed"
             };
-            let result = compress_one(path.clone(), *level, suffix);
+            let result = compress_one(path.clone(), *level, suffix, flatten);
             let _ = app.emit("compress-result", &result);
         };
         if parallel {
@@ -139,7 +142,7 @@ async fn compress_files(
     .map_err(|e| e.to_string())
 }
 
-fn compress_one(path: String, level: Level, suffix: &str) -> CompressResult {
+fn compress_one(path: String, level: Level, suffix: &str, flatten: bool) -> CompressResult {
     let empty = |status, message| CompressResult {
         input: path.clone(),
         level: level.as_str().to_string(),
@@ -148,16 +151,19 @@ fn compress_one(path: String, level: Level, suffix: &str) -> CompressResult {
         input_size: None,
         output_size: None,
         fidelity: None,
+        annotations_flattened: 0,
         message,
     };
     let mut profile = level.profile();
     profile.measure_fidelity = true;
+    profile.flatten_annotations = flatten;
     match compress_file_with(&PathBuf::from(&path), &profile, suffix) {
         Ok(Outcome::Compressed { output, report }) => CompressResult {
             output: Some(output.display().to_string()),
             input_size: Some(report.input_size),
             output_size: Some(report.output_size),
             fidelity: report.image_fidelity.map(FidelityDto::from),
+            annotations_flattened: report.annotations_flattened,
             ..empty("compressed", None)
         },
         Ok(Outcome::NotSmaller) => empty("not_smaller", None),

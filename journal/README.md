@@ -97,6 +97,7 @@ never reassigned.
 | [D-024](D-024-ui-languages.md) | app and web in English and French (`i18n.js`, shared); CLI in English only | adopted (retrospective) |
 | [D-025](D-025-license.md) | license MIT at first, never written down; now `MIT OR Apache-2.0`, with `LICENSE-MIT` and `LICENSE-APACHE` | adopted (retrospective), revised |
 | [D-026](D-026-streams-without-length.md) | streams without `/Length`: read back in the core after loading, fixed upstream in lopdf (fork branch), a stream still lost makes the file refused; lopdf 0.47; orphan `/DecodeParms` dropped before compressing | adopted, revised |
+| [D-027](D-027-flatten-annotations.md) | flattening annotations: appearance streams drawn into the page with `Do` (text stays text), markup + form widgets only, opt-in in every front end, written even when not smaller | adopted |
 
 ## Questions waiting for an entry
 

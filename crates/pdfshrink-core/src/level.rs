@@ -222,6 +222,12 @@ pub struct Profile {
     /// Measure how faithful re-encoded images are (`Report::image_fidelity`).
     /// Doesn't change the output; costs a decode and an SSIM per image.
     pub measure_fidelity: bool,
+    /// Flatten annotations (`flatten.rs`): draw the appearance of markup
+    /// annotations and form fields into the page content and delete them, so
+    /// they can no longer be moved or edited; text stays text. Turned on by
+    /// the user (`--flatten`, a checkbox), never by a level (D-027). With it,
+    /// the output is written even when it isn't smaller.
+    pub flatten_annotations: bool,
     /// Which encoder writes JPEGs (see `jpeg.rs`): mozjpeg when the build
     /// has it, else the pure-Rust one — the WebAssembly build's output can
     /// differ from the desktop's at every level that re-encodes images.
@@ -253,12 +259,13 @@ impl Profile {
         crop: false,
         scan_whiten: false,
         measure_fidelity: false,
+        flatten_annotations: false,
         jpeg_encoder: JpegEncoder::DEFAULT,
     };
 
     /// Keys accepted by [`Profile::tune`].
     pub const TUNABLE: &'static str = "dpi, trigger, quality, max_dim, page_px, ssim, min_quality \
-        (numbers); dedup, fonts, cff, cff_subset, zopfli, gray, palette, opaque_smask, crop, scan_whiten, fidelity (0/1); \
+        (numbers); dedup, fonts, cff, cff_subset, zopfli, gray, palette, opaque_smask, crop, scan_whiten, fidelity, flatten (0/1); \
         jpeg (mozjpeg or rust)";
 
     /// Override one parameter from a `key=value` string, for experimenting
@@ -294,6 +301,7 @@ impl Profile {
             "crop" => self.crop = b()?,
             "scan_whiten" => self.scan_whiten = b()?,
             "fidelity" => self.measure_fidelity = b()?,
+            "flatten" => self.flatten_annotations = b()?,
             "jpeg" => self.jpeg_encoder = JpegEncoder::parse(v).ok_or_else(bad)?,
             _ => return Err(format!("unknown key '{k}' (expected: {})", Self::TUNABLE)),
         }

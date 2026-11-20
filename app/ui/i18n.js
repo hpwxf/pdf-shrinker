@@ -22,6 +22,9 @@ window.I18N = (() => {
         compareAll: "Compare all levels",
         parallel: "Run in parallel",
         parallelTip: "Compress several files (or levels) at once: faster on a multi-core Mac, but uses more memory.",
+        flatten: "Flatten annotations",
+        flattenTip:
+          "Draws text boxes, drawings, stamps, highlights and filled form fields into the page: they can no longer be moved or edited, text stays selectable. Links and notes are kept. The file is written even if it isn't smaller.",
       },
       level: {
         lossless: "Lossless",
@@ -60,6 +63,7 @@ window.I18N = (() => {
         fidelityTip:
           "Similarity (luma SSIM) of the {images} re-encoded image(s) to the originals, at their original size: 1 = identical. Least faithful image: {min}.",
         noImages: "no image re-encoded",
+        flattened: "{n} annotation(s) flattened",
       },
       install: {
         button: "Install the Finder service and command-line tool…",
@@ -109,6 +113,9 @@ window.I18N = (() => {
         compareAll: "Comparer tous les niveaux",
         parallel: "En parallèle",
         parallelTip: "Compresse plusieurs fichiers (ou niveaux) à la fois : plus rapide sur un Mac multicœur, mais consomme plus de mémoire.",
+        flatten: "Aplatir les annotations",
+        flattenTip:
+          "Intègre à la page les zones de texte, dessins, tampons, surlignages et champs de formulaire remplis : ils ne sont plus déplaçables ni modifiables, le texte reste sélectionnable. Liens et notes sont conservés. Le fichier est écrit même s'il n'est pas plus petit.",
       },
       level: {
         lossless: "Sans perte",
@@ -147,6 +154,7 @@ window.I18N = (() => {
         fidelityTip:
           "Similarité (SSIM de luminance) des {images} image(s) réencodée(s) avec les originales, à leur taille d'origine : 1 = identique. Image la moins fidèle : {min}.",
         noImages: "aucune image réencodée",
+        flattened: "{n} annotation(s) aplatie(s)",
       },
       install: {
         button: "Installer le service Finder et l'outil en ligne de commande…",
