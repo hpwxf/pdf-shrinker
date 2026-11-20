@@ -1,12 +1,12 @@
-# D-016 — Apple Silicon only, with one exception: a manual Windows x86_64 build
+# D-016 — Platform scope: macOS on Apple Silicon first, Windows on demand, the browser for the rest
 
 | | |
 |---|---|
 | **Identifier** | D-016 |
 | **Date** | 2026-11-20 (retrospective; decisions taken on 2026-09-28 and 2026-09-30) |
 | **Author** | Pascal Havé |
-| **Status** | adopted (retrospective) |
-| **Commits** | `41f2fdb` (`aarch64-apple-darwin` only), `208345b` (Windows workflow), `3086ca1` (`RunEvent::Opened` macOS-only) |
+| **Status** | adopted (retrospective), revised |
+| **Commits** | `41f2fdb` (`aarch64-apple-darwin` only), `208345b` (Windows workflow), `3086ca1` (`RunEvent::Opened` macOS-only), `d3561a7` (web version, D-018) |
 
 ## 1. Context
 
@@ -54,3 +54,13 @@ platform-neutral, which is what made Windows and wasm cheap.
 * Windows users reporting real use: then the Windows build deserves a CI job on push, not only a
   manual one.
 * An Intel Mac user to test on, or a Developer ID requiring universal binaries for distribution.
+
+## Revision (2026-11-20) — "Apple Silicon only" no longer describes the product
+
+The README and `CLAUDE.md` still opened with "Apple Silicon only", true of the first commit but not
+since the Windows build (`208345b`) and the web version (`d3561a7`, D-018), which runs in any modern
+browser. The scope is unchanged; only its wording is corrected. The README now has a table of where
+each front end runs and how well it is checked: macOS arm64 (CLI, app, Finder service; CI on every
+push), Windows x86_64 (CLI, app; manual workflow, CLI smoke-tested), any browser (web page; manual
+deployment, smoke-tested in Node), and everything else (native CLI neither built nor tested). "Apple
+Silicon only" still holds for the macOS desktop builds: no x86_64 or universal `.dmg`.

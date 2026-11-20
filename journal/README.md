@@ -86,7 +86,7 @@ never reassigned.
 | [D-013](D-013-tauri-gui-vanilla-js.md) | GUI on Tauri 2 (for macOS `odoc` events), static HTML/JS with no npm, core called directly, per-file events | adopted (retrospective) |
 | [D-014](D-014-shared-config-file.md) | one persisted config file (`default_level`) read by CLI, app and Finder service; unknown keys ignored | adopted (retrospective) |
 | [D-015](D-015-finder-service-automator-workflow.md) | Finder integration = Automator `.workflow` service calling the bundled CLI, not an `.appex` Quick Action; CLI symlink falls back to `~/.local/bin` | adopted (retrospective) |
-| [D-016](D-016-platform-scope.md) | Apple Silicon only, with one exception: a manual Windows x86_64 build of the CLI and app | adopted (retrospective) |
+| [D-016](D-016-platform-scope.md) | platform scope: macOS on Apple Silicon first (CI), Windows x86_64 on demand, any browser through the web version | adopted (retrospective), revised |
 | [D-017](D-017-distribution-and-signing.md) | distribution: `.dmg` from `scripts/build-dmg.sh`, ad-hoc signing, manual release workflows; notarization deferred | adopted (retrospective) |
 | [D-018](D-018-web-version-in-the-browser.md) | web version: the same core in WebAssembly, in the visitor's browser, static site on GitHub Pages; `native` feature gates desktop-only code | adopted (retrospective) |
 | [D-019](D-019-jpeg-codecs.md) | JPEG: mozjpeg natively, pure-Rust `jpeg-encoder` otherwise; every JPEG decoded by `jpeg-decoder`, never zune-jpeg | adopted (retrospective) |
