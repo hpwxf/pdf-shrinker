@@ -96,7 +96,7 @@ never reassigned.
 | [D-023](D-023-build-identifier-in-core.md) | build identifier (commit + dirty flag) baked into `pdfshrink-core`, read by every front end through `build_info()` | adopted (retrospective) |
 | [D-024](D-024-ui-languages.md) | app and web in English and French (`i18n.js`, shared); CLI in English only | adopted (retrospective) |
 | [D-025](D-025-license.md) | license MIT at first, never written down; now `MIT OR Apache-2.0`, with `LICENSE-MIT` and `LICENSE-APACHE` | adopted (retrospective), revised |
-| [D-026](D-026-streams-without-length.md) | streams without `/Length`: read back in the core after loading, fixed upstream in lopdf (fork branch), a stream still lost makes the file refused; lopdf 0.47 | adopted |
+| [D-026](D-026-streams-without-length.md) | streams without `/Length`: read back in the core after loading, fixed upstream in lopdf (fork branch), a stream still lost makes the file refused; lopdf 0.47; orphan `/DecodeParms` dropped before compressing | adopted, revised |
 
 ## Questions waiting for an entry
 

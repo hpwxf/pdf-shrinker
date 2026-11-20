@@ -1254,3 +1254,59 @@ fn a_stream_that_cannot_be_recovered_is_refused() {
         "expected UnreadableStream, got {err:?}"
     );
 }
+
+#[test]
+fn decode_parms_of_an_uncompressed_stream_do_not_reach_its_new_filter() {
+    // jsPDF writes soft masks uncompressed but with a PNG predictor in
+    // /DecodeParms: meaningless without a filter, harmful once Flate is added.
+    let mut doc = build_text_only_pdf();
+    let samples: Vec<u8> = (0..216 * 170)
+        .map(|i| if i % 216 < 108 { 0 } else { 255 })
+        .collect();
+    let mut mask = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => 216,
+            "Height" => 170,
+            "ColorSpace" => "DeviceGray",
+            "BitsPerComponent" => 8,
+            "DecodeParms" => dictionary! {
+                "Predictor" => 12, "Colors" => 1, "BitsPerComponent" => 8, "Columns" => 216,
+            },
+        },
+        samples.clone(),
+    );
+    mask.allows_compression = false;
+    let mask_id = doc.add_object(mask);
+    let page_id = doc.get_pages()[&1];
+    let page = doc.get_dictionary_mut(page_id).unwrap();
+    let mut resources = page.get(b"Resources").unwrap().as_dict().unwrap().clone();
+    resources.set(
+        "XObject",
+        dictionary! { "Im0" => Object::Reference(mask_id) },
+    );
+    page.set("Resources", resources);
+    let mut input = Vec::new();
+    doc.save_to(&mut input).unwrap();
+
+    let (output, _) = pdfshrink_core::compress_bytes(
+        &input,
+        std::path::Path::new("in.pdf"),
+        &Level::Lossless.profile(),
+    )
+    .unwrap();
+    let doc = Document::load_mem(&output).unwrap();
+    let mask = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .find(|s| s.dict.get(b"Width").and_then(Object::as_i64).ok() == Some(216))
+        .unwrap();
+    assert!(mask.dict.has(b"Filter"), "the samples compress well");
+    assert!(
+        !mask.dict.has(b"DecodeParms"),
+        "no predictor applied to raw samples"
+    );
+    assert_eq!(mask.decompressed_content().unwrap(), samples);
+}

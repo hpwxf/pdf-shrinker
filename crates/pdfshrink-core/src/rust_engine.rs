@@ -97,7 +97,9 @@ pub fn compress_bytes(input: &[u8], name: &Path, profile: &Profile) -> Result<(V
     }
 
     // Flate-compress any stream that isn't compressed yet (fonts, content
-    // streams, …). A no-op for streams that already have a /Filter.
+    // streams, …). A no-op for streams that already have a /Filter. lopdf keeps a
+    // /DecodeParms it finds there, which would then apply to the new filter.
+    drop_orphan_decode_parms(&mut doc);
     doc.compress();
     if profile.zopfli {
         let saved = zopfli_pass::rezopfli_streams(&mut doc);
@@ -146,6 +148,21 @@ impl PhaseLog {
         if let Some(last) = &mut self.last {
             eprintln!("  [{:>6.1}s] {what}", last.elapsed().as_secs_f32());
             *last = std::time::Instant::now();
+        }
+    }
+}
+
+/// Removes `/DecodeParms` from streams that have no `/Filter`. Parameters only
+/// describe filters, so there they mean nothing — until `Document::compress`
+/// adds `/FlateDecode` and keeps them: jsPDF writes uncompressed soft masks with
+/// a PNG `/Predictor`, which viewers would then apply to raw samples, shifting
+/// every row by one byte (a diagonal seam through the image).
+fn drop_orphan_decode_parms(doc: &mut Document) {
+    for obj in doc.objects.values_mut() {
+        if let Object::Stream(s) = obj
+            && !s.dict.has(b"Filter")
+        {
+            s.dict.remove(b"DecodeParms");
         }
     }
 }

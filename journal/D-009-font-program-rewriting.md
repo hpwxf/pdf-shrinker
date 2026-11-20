@@ -113,7 +113,7 @@ Effect on the corpus (399 files, `lossless`, every page rendered at 40 dpi again
 merges → 1,254, the four refused being the four wrong ones; pixel-identical files 380 → 383 (the
 Pages document, the Keynote deck, and a third file whose only defect was the trimmed `cmap`). The
 two files that still differ do so identically before and after, with the font passes turned off
-too: a defect elsewhere, not investigated here.
+too: two lopdf behaviours, see D-026's revision.
 
 Still open: CID TrueType subsets that renumber their GIDs, at a fixed pitch, with a space at a GID
 another subset draws, would still merge wrongly — no `cmap` to tell, and the `/W` widths agree. None

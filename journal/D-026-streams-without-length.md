@@ -5,7 +5,7 @@
 | **Identifier** | D-026 |
 | **Date** | 2026-11-20 |
 | **Author** | Pascal Havé |
-| **Status** | adopted |
+| **Status** | adopted, revised |
 | **Commits** | this entry's commit (`stream_recovery.rs`, lopdf 0.45 → 0.47, D-009 revision) |
 
 ## 1. Context
@@ -79,3 +79,24 @@ C was rejected for the reasons above.
   (keep the guard) and revise this entry.
 * `UnreadableStream` reported on files users care about: the next step is the "repairing broken
   PDFs" question of the README, not a looser guard.
+
+## Revision (2026-11-20): `/DecodeParms` left on a stream lopdf compresses; reals written as `f32`
+
+The corpus check of this entry left two files that differ from their input with the font passes
+off. Both come from lopdf too, and both existed before:
+
+* **A jsPDF form**: a diagonal seam through a logo. jsPDF writes the logo's soft mask uncompressed
+  but with a PNG `/Predictor` in `/DecodeParms` — meaningless without a filter.
+  `Document::compress` (`Stream::compress`) adds `/FlateDecode` and keeps the parameters, so
+  viewers apply the predictor to raw samples and every row shifts by one byte. Same treatment as
+  above: `rust_engine.rs` removes `/DecodeParms` from every stream without `/Filter` before
+  `doc.compress()`, and the fork's branch gets the same fix in `Stream::compress`. Corpus: that file
+  becomes pixel-identical, one other jsPDF file shrinks by 71 bytes and stays identical, nothing
+  else changes.
+* **A Chrome (Skia) export**: not a visible defect. lopdf holds reals as `f32` and writes them
+  back rounded (`841.91998` → `841.92` in every `/MediaBox`, `602.05078` → `602.0508` in `/W`);
+  the 0.00002 pt change of page height alone is enough for poppler to round some text lines to the
+  next pixel row (rounding only the `/MediaBox` of the input reproduces the same difference,
+  16,342 pixels at 40 dpi). lopdf's `main` keeps reals as `f64` (#674, a breaking change, not
+  released yet): taken with the next release, nothing to do in the core.
+

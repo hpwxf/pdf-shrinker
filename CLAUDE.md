@@ -122,7 +122,9 @@ crate builds for `wasm32-unknown-unknown`. Never call `std::time::Instant::now()
     lost fails with `UnreadableStream` →
     `dedup_streams` (hashes stream bytes, merges byte-identical streams via `doc.traverse_objects`
     reference rewriting, then re-prunes) → `image_ops::resample_images` (skipped entirely for
-    Lossless) → `doc.compress()` (Flate any uncompressed stream) → `doc.save_modern()` (xref +
+    Lossless) → `drop_orphan_decode_parms` (a `/DecodeParms` on an unfiltered stream would survive
+    the next step and apply a predictor to raw samples — jsPDF soft masks) → `doc.compress()`
+    (Flate any uncompressed stream) → `doc.save_modern()` (xref +
     object streams) → reload and verify the page count didn't change (else the output is discarded
     and `PageCountMismatch` is returned).
 - `placement.rs`: figures out each image XObject's *effective DPI* by walking page (and nested Form
