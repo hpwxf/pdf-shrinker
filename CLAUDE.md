@@ -20,6 +20,16 @@ core without its `native` feature, so it is single-threaded and encodes JPEGs wi
 `jpeg-encoder` instead of mozjpeg — its output differs from the desktop's at every level that
 re-encodes images (often bigger), and the page says so (`Level::differs_from_desktop`).
 
+## Decisions
+
+`journal/` holds the architecture decision records (ADRs): one `D-NNN-*.md` per trade-off, with
+the options set aside and what would change our minds; `journal/README.md` has the format, the
+index and the questions still waiting for an entry. Read the relevant entry before revisiting a
+choice. A new architectural decision gets its entry **before or with** the code, as the first file
+of the commit; a decision that drifts is revised in place (dated section), never renumbered.
+Definition of "done": what `.github/workflows/ci.yml` runs (`fmt --check`, `clippy --workspace
+--all-targets --locked -D warnings`, `test --workspace --locked`, with the CLI sidecar staged).
+
 ## Commands
 
 ```bash
