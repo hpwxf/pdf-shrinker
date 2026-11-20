@@ -1165,3 +1165,92 @@ fn matte_keeps_the_parent_color_space() {
         Object::Name(b"DeviceRGB".to_vec())
     );
 }
+
+/// A text-only PDF whose font has an embedded `/FontFile2` holding `program`,
+/// saved uncompressed, then with that stream's `/Length` blanked out (spaces of
+/// the same length, so the cross-reference offsets stay right) — as 4-Heights
+/// PDF Library writes form-field fonts. `break_end` also damages the
+/// `endstream` keyword, so the stream's end cannot be found either.
+fn pdf_with_font_lacking_length(program: &[u8], break_end: bool) -> Vec<u8> {
+    let mut doc = build_text_only_pdf();
+    let mut font_file = Stream::new(
+        dictionary! { "Length1" => program.len() as i64 },
+        program.to_vec(),
+    );
+    font_file.allows_compression = false;
+    let ff_id = doc.add_object(font_file);
+    let fd_id = doc.add_object(dictionary! {
+        "Type" => "FontDescriptor",
+        "FontName" => "ABCDEF+Test",
+        "Flags" => 32,
+        "FontFile2" => Object::Reference(ff_id),
+    });
+    for obj in doc.objects.values_mut() {
+        if let Ok(font) = obj.as_dict_mut()
+            && font.get(b"Type").and_then(Object::as_name).ok() == Some(b"Font".as_slice())
+        {
+            font.set("Subtype", "TrueType");
+            font.set("FontDescriptor", Object::Reference(fd_id));
+        }
+    }
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+
+    let header = format!("{} 0 obj", ff_id.0);
+    let start = find(&bytes, header.as_bytes(), 0).expect("font file object");
+    let length = format!("/Length {}", program.len());
+    let at = find(&bytes, length.as_bytes(), start).expect("its /Length");
+    bytes[at..at + length.len()].fill(b' ');
+    if break_end {
+        let end = find(&bytes, b"endstream", at).unwrap();
+        bytes[end] = b'x';
+    }
+    bytes
+}
+
+fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    haystack[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|p| from + p)
+}
+
+#[test]
+fn a_stream_without_length_is_recovered() {
+    let program = b"not a real TrueType program, but every byte must survive";
+    let input = pdf_with_font_lacking_length(program, false);
+    let (output, _) = pdfshrink_core::compress_bytes(
+        &input,
+        std::path::Path::new("in.pdf"),
+        &Level::Lossless.profile(),
+    )
+    .unwrap();
+    let doc = Document::load_mem(&output).unwrap();
+    let font_file = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .find(|s| s.dict.has(b"Length1"))
+        .expect("the font program is kept");
+    assert_eq!(
+        font_file
+            .decompressed_content()
+            .unwrap_or(font_file.content.clone()),
+        program
+    );
+}
+
+#[test]
+fn a_stream_that_cannot_be_recovered_is_refused() {
+    let input = pdf_with_font_lacking_length(b"font program bytes", true);
+    let err = pdfshrink_core::compress_bytes(
+        &input,
+        std::path::Path::new("in.pdf"),
+        &Level::Lossless.profile(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, PdfShrinkError::UnreadableStream(..)),
+        "expected UnreadableStream, got {err:?}"
+    );
+}

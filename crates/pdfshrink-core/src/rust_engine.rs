@@ -9,7 +9,9 @@ use crate::engine::{Engine, Report};
 use crate::image_ops;
 use crate::level::Profile;
 use crate::{PdfShrinkError, Result};
-use crate::{cff_subset, deep_dedup, font_merge, type1_cff, type1_merge, zopfli_pass};
+use crate::{
+    cff_subset, deep_dedup, font_merge, stream_recovery, type1_cff, type1_merge, zopfli_pass,
+};
 
 /// Pure-Rust compression engine: structural cleanup (dead-object pruning, stream
 /// dedup, Flate recompression) plus, when the profile asks for it, image
@@ -38,6 +40,7 @@ impl Engine for RustEngine {
 pub fn compress_bytes(input: &[u8], name: &Path, profile: &Profile) -> Result<(Vec<u8>, Report)> {
     let mut doc =
         Document::load_mem(input).map_err(|e| PdfShrinkError::InvalidPdf(name.to_path_buf(), e))?;
+    let recovered = stream_recovery::recover_missing_lengths(&mut doc, input);
 
     if doc.is_encrypted() {
         return Err(PdfShrinkError::Encrypted(name.to_path_buf()));
@@ -47,8 +50,18 @@ pub fn compress_bytes(input: &[u8], name: &Path, profile: &Profile) -> Result<(V
     let mut phase = PhaseLog::new();
 
     doc.prune_objects();
+    // Checked once unreferenced objects are gone: only a stream the output keeps matters.
+    if let Some((num, generation)) = stream_recovery::first_unreadable_stream(&doc) {
+        return Err(PdfShrinkError::UnreadableStream(
+            name.to_path_buf(),
+            num,
+            generation,
+        ));
+    }
     dedup_streams(&mut doc);
-    phase.done("prune+dedup");
+    phase.done(&format!(
+        "prune+dedup ({recovered} streams without /Length recovered)"
+    ));
     if profile.deep_dedup {
         let n = deep_dedup::deep_dedup(&mut doc);
         phase.done(&format!("deep dedup ({n} merged)"));

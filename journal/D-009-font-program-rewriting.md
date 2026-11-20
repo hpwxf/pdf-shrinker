@@ -5,7 +5,7 @@
 | **Identifier** | D-009 |
 | **Date** | 2026-11-20 (retrospective; decisions taken on 2026-09-30 and 2026-10-05) |
 | **Author** | Pascal Havé |
-| **Status** | adopted (retrospective) |
+| **Status** | adopted (retrospective), revised |
 | **Commits** | `7d41753` (`font_merge.rs` CID TrueType, `type1_merge.rs`, `type1_cff.rs`), `32eca47` (at every level), `247e56d` (simple TrueType, `name` table, `cff_subset.rs`), `60564cf` (re-deflate CFF programs), `3801a31` (ordered merge groups, D-012) |
 
 ## 1. Context
@@ -80,3 +80,42 @@ Results: slide deck, embedded fonts 2.32 MB → 0.18 MB (same as iLovePDF); thes
 * If the remaining gap (CFF subset merging, TrueType subsets with renumbered GIDs) required a
   `CIDToGIDMap` per font (`docs/compression-strategies.md` §5), that is still C. D would only become
   attractive if we started rewriting content streams anyway.
+
+## Revision (2026-11-20): blank glyphs and subsets that renumber their GIDs
+
+The signal of §5 happened. Recovering the fonts lopdf used to load empty (D-026) made the simple
+TrueType merge run on 4-Heights form fonts, and every space of an address field came out as an `X`.
+Looking for the cause on the corpus (`lossless`, every page rendered against the input) found the
+same hole on files that had nothing to do with that loader bug: a Pages document (5 pages out of 6
+damaged) and a Keynote deck (spaces and end-of-paragraph marks drawn as boxes or `(` on ~40
+pages), both already wrong before D-026.
+
+Not every subsetter keeps the original GIDs: 4-Heights and Quartz's `AAAAAx+` subsets number their
+glyphs in order of use. The agreement check compared glyph data only where *both* subsets have an
+outline, so an empty glyph — a space, a zero-width mark — agreed with anything, and the union took
+the other subset's outline. A second, separate hole: when a program is rewritten (merged, or trimmed
+alone), its `cmap` kept only entries to drawn glyphs or to the codes `0x20`/`0xA0`; Keynote puts
+spaces in a font of their own at codes 33 and 34, which then showed `.notdef`.
+
+What changed, in `font_merge.rs`:
+
+* **Simple TrueType**: every `cmap` entry from a code in `FirstChar..=LastChar` to an empty glyph
+  is recorded. Another subset may draw that GID only if its own `cmap` sends the same code to it —
+  the case of an emptied slot in a subset that keeps original GIDs and the whole `cmap` (Word). Those
+  entries are always kept in the rewritten `cmap`.
+* **Every TrueType merge** (CID too, which has no `cmap` to compare): an empty glyph agrees with a
+  drawn one only if its advance is zero (slot emptied with its metrics) or equal to the drawn
+  glyph's. This alone does not separate a space from a glyph at a fixed pitch.
+* A bare subset prefix (`AAAAAA+`, no name after it) is no font name: such programs are no longer
+  grouped together (`font_merge.rs` and `type1_merge.rs`).
+
+Effect on the corpus (399 files, `lossless`, every page rendered at 40 dpi against the input): 1,258
+merges → 1,254, the four refused being the four wrong ones; pixel-identical files 380 → 383 (the
+Pages document, the Keynote deck, and a third file whose only defect was the trimmed `cmap`). The
+two files that still differ do so identically before and after, with the font passes turned off
+too: a defect elsewhere, not investigated here.
+
+Still open: CID TrueType subsets that renumber their GIDs, at a fixed pitch, with a space at a GID
+another subset draws, would still merge wrongly — no `cmap` to tell, and the `/W` widths agree. None
+in the corpus.
+

@@ -79,7 +79,7 @@ never reassigned.
 | [D-006](D-006-effective-dpi-and-caps.md) | image resolution from the on-page placement (CTM walk), backed by a longest-side cap and, at `extreme*`, a page-relative cap; always re-encode | adopted (retrospective) |
 | [D-007](D-007-six-flat-levels.md) | six cumulative levels, each one flat `Profile` built from `Profile::BASE`; lossless passes at every level; `--tune` overrides | adopted (retrospective), revised |
 | [D-008](D-008-ssim-driven-jpeg-quality.md) | JPEG quality searched per image on SSIM (luma, chroma guard); fixed mid-range quality for detected scans | adopted (retrospective), revised |
-| [D-009](D-009-font-program-rewriting.md) | font programs rewritten in-house: subset merging (CID TrueType, Type 1, simple TrueType), Type 1 → CFF, CFF subset completion; merge only when subsets agree | adopted (retrospective) |
+| [D-009](D-009-font-program-rewriting.md) | font programs rewritten in-house: subset merging (CID TrueType, Type 1, simple TrueType), Type 1 → CFF, CFF subset completion; merge only when subsets agree | adopted (retrospective), revised |
 | [D-010](D-010-image-kinds-and-colour.md) | image kinds: CMYK stays CMYK, JPEG 2000 and CCITT decoded in pure Rust, bi-level at 2× the colour targets, palettes lossless, soft masks always lossless | adopted (retrospective) |
 | [D-011](D-011-look-changing-passes-only-at-extreme.md) | up to `high` a page never changes beyond compression artifacts; cropping, paper whitening, Zopfli and the page-relative cap only at `extreme*` | adopted (retrospective) |
 | [D-012](D-012-deterministic-output.md) | byte-identical output from one run to the next (ordered maps where object numbers are assigned) | adopted (retrospective) |
@@ -96,6 +96,7 @@ never reassigned.
 | [D-023](D-023-build-identifier-in-core.md) | build identifier (commit + dirty flag) baked into `pdfshrink-core`, read by every front end through `build_info()` | adopted (retrospective) |
 | [D-024](D-024-ui-languages.md) | app and web in English and French (`i18n.js`, shared); CLI in English only | adopted (retrospective) |
 | [D-025](D-025-license.md) | license MIT at first, never written down; now `MIT OR Apache-2.0`, with `LICENSE-MIT` and `LICENSE-APACHE` | adopted (retrospective), revised |
+| [D-026](D-026-streams-without-length.md) | streams without `/Length`: read back in the core after loading, fixed upstream in lopdf (fork branch), a stream still lost makes the file refused; lopdf 0.47 | adopted |
 
 ## Questions waiting for an entry
 

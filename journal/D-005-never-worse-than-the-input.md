@@ -36,7 +36,8 @@ reload the output and check the page count; never overwrite an earlier output.
 
 * **In `compress_bytes`** (every front end, web included): the output is saved as PDF 1.5 with object
   streams, **reloaded**, and its page count compared with the input's; a mismatch discards it
-  (`PageCountMismatch`). Encrypted files are refused (`Encrypted`) rather than rewritten.
+  (`PageCountMismatch`). Encrypted files are refused (`Encrypted`) rather than rewritten, and so is a
+  file with a referenced stream the loader could not read (`UnreadableStream`, D-026).
 * **In `compress_file`** (desktop): output `<name>-compressed.pdf`, then `-compressed-2`, `-3`… if
   taken; written to `<output>.pdfshrink-tmp` next to it and renamed into place only if
   `output_size < input_size`, otherwise deleted and `Outcome::NotSmaller` returned. The CLI turns

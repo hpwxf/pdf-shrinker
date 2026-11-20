@@ -54,7 +54,8 @@ The price, paid knowingly:
 
 * `lopdf` limits what can be read. It only honours a *direct* `/DecodeParms` (`image_ops` inlines
   indirect ones; before that fix, the LaTeX thesis lost 4 MB of savings, `7d41753`), and files it
-  refuses to open cannot be repaired (`TODO.md`).
+  refuses to open cannot be repaired (`TODO.md`). It also loaded streams without a `/Length` as
+  empty, silently (D-026).
 * Every codec gap is ours to fill: JBIG2 and CCITT G3 are still left untouched (D-010).
 
 ## 5. What would make us change our minds
